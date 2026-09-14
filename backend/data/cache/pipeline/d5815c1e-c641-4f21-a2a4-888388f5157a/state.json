@@ -1,0 +1,43 @@
+{
+ "steps": {
+  "base": {
+   "params": {
+    "transition": "fade",
+    "prefer_generated": true,
+    "auto_images": false
+   },
+   "ok": false,
+   "error": "该项目还没有分镜。请先在「剧本」页生成剧本，再到「分镜」页点「自动从剧本生成」。",
+   "note": "",
+   "output": "",
+   "duration": 0,
+   "skipped": false,
+   "warnings": []
+  },
+  "voice": {
+   "params": {
+    "voice_id": "edge:zh-CN-XiaoxiaoNeural"
+   },
+   "ok": false,
+   "error": "没有上一步的产物，请先跑「① 接底片」",
+   "note": "",
+   "output": "",
+   "duration": 0,
+   "skipped": false,
+   "warnings": []
+  },
+  "subtitle": {
+   "params": {
+    "font_size": 24,
+    "font_color": "white"
+   },
+   "ok": false,
+   "error": "没有上一步的产物，请先跑前面的步骤",
+   "note": "",
+   "output": "",
+   "duration": 0,
+   "skipped": false,
+   "warnings": []
+  }
+ }
+}

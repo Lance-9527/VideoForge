@@ -1,0 +1,32 @@
+# VideoForge 依赖（Python 3.11+ / 已在 3.14.5 验证）
+
+# ──────────── Web 框架 / 服务端 ────────────
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+httpx>=0.27
+python-multipart>=0.0.9
+PyYAML>=6.0
+Pillow>=10.0
+numpy>=1.26
+sse-starlette>=2.0
+pywebview>=5.0          # 桌面窗口（可选：仅 --browser 模式时不需要）
+
+# ──────────── 借鉴 MPT 新增（阶段 1 · 跑通最小闭环）────────────
+# TTS（最大短板）
+edge-tts>=6.1            # 微软 Edge TTS，零 API key 起步（fallback provider）
+                          # SiliconFlow TTS 走 OpenAI 兼容协议，无需额外 SDK
+
+# 音频处理（字幕 / BGM / 配音 混流）
+pydub>=0.25              # 简单 wav/mp3 操作；混音走 FFmpeg，pydub 只做小片段
+
+# 日志（统一管理后台和服务端日志）
+loguru>=0.7              # 比 stdlib logging 友好，分级 / 彩色 / 滚动文件
+
+# ──────────── 阶段 2 计划加（先注释，需要时再启用）────────────
+# faster-whisper>=1.0     # TTS 音频 → word-level 字幕时间戳（更准的字幕对齐）
+# pydantic-settings>=2.0  # 未来配置 schema 校验
+
+# ──────────── PyInstaller 打包时建议补充（可选）────────────
+# pyinstaller>=6.0
+# pyinstaller-hooks-contrib>=2024.1

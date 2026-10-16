@@ -97,6 +97,26 @@ VIDEO_CATALOG: Dict[str, Dict[str, Any]] = {
                 "verified": True,
             },
             {
+                "id": "MiniMax-Hailuo-03",
+                "label": "Hailuo-03 (H3) · 白膜/Previz 驱动运镜",
+                "mode": "i2v", "mode_zh": "图生视频 + 视频参考",
+                "tags": ["白膜参考", "视频参考", "运镜驱动", "最新"],
+                "caps": {"768P": [6, 10], "1080P": [6]},
+                "best_for": "把白膜视频当 video_reference 喂进去，按白膜运镜渲染实拍。"
+                            "官方支持 ≤3 段视频参考、单段 2–15s、总 ≤15s。"
+                            "**前提**：场景的 reference_features.video_reference.path 已设置（白膜视频已上传）",
+                "verified": False,
+            },
+            {
+                "id": "MiniMax-Hailuo-03-Max",
+                "label": "Hailuo-03 Max (H3 Max) · 顶配",
+                "mode": "i2v", "mode_zh": "图生视频 + 视频参考",
+                "tags": ["白膜参考", "视频参考", "顶配"],
+                "caps": {"768P": [6, 10], "1080P": [6]},
+                "best_for": "H3 顶配版，画质与运镜还原度上限更高",
+                "verified": False,
+            },
+            {
                 "id": "T2V-01-Director",
                 "label": "T2V-01-Director · 导演运镜",
                 "mode": "t2v", "mode_zh": "文生视频（支持运镜指令）",
@@ -148,6 +168,25 @@ VIDEO_CATALOG: Dict[str, Dict[str, Any]] = {
             {"id": "MiniMax-Hailuo-02-Fast", "reason": "该模型名不存在（实测报 incorrect model param input）"},
             {"id": "MiniMax-Hailuo-2.3-Fast", "reason": "不支持文生视频"},
             {"id": "S2V-01", "reason": "需要 subject_reference 主体参考参数，当前未接入"},
+        ],
+    },
+
+    "seedance_t6": {
+        "display": "Seedance 2.0 · token6688 网关",
+        "note": "走 agentai.token6688.com 网关（火山方舟兼容协议）。按秒计费，最便宜通道约 0.42 元/秒，"
+                "响应排队最长可能 20 分钟；用于不想单独开火山方舟账号、想用 token6688 余额的场景。",
+        "audio": {"native": None,
+                  "note": "Seedance 2.0 是否带音轨视具体版本；token6688 网关未明确，"
+                          "以实际成片为准。"},
+        "models": [
+            # ★ token6688 网关别名（OpenAPI 实测）
+            #   与方舟官方模型 ID `doubao-seedance-2-0-260128` 等价
+            {"id": "seedance-2-0-official", "label": "Seedance 2.0 · 官方直连",
+             "tags": ["文生视频", "图生视频", "多参考图(≤9)", "首尾帧", "按秒计费"],
+             # 方舟 2.0 官方区间 [4, 15]，480P 也支持
+             "caps": {"480P": [5, 10, 15], "720P": [5, 10, 15], "1080P": [5, 10, 15]},
+             "best_for": "9:16 竖屏短剧主力。720p 15s 是 token6688 性价比最高的档位。",
+             "verified": False},
         ],
     },
 

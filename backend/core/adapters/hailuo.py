@@ -187,6 +187,23 @@ class HailuoAdapter(VideoAdapter):
         if req.first_frame:
             payload["first_frame_image"] = req.first_frame
 
+        # ★ 视频参考（白膜/Previz 驱动运镜）。仅 MiniMax H3（MiniMax-Hailuo-03 /
+        #   H3 Max）官方支持：≤3 段、总 ≤15s、单段 2–15s。其余旧模型（02 / 2.3 /
+        #   01 / T2V / I2V）传了会被厂商拒（2049 / 2013），这里提前拦下并给出
+        #   中文可操作提示，避免用户看到英文错误。
+        if req.video_url:
+            if "Hailuo-03" in model or "H3" in model.upper().replace("MINIMAX-HAILUO-", ""):
+                # minimaxi 视频参考字段：传 URL/路径列表，厂商会自己 fetch
+                payload["video_reference"] = [req.video_url]
+                logger.info("海螺 H3 视频参考已附加：%s", req.video_url[:80])
+            else:
+                return self.make_result(
+                    False,
+                    error=(f"「{model}」不支持视频参考（白膜驱动）。"
+                           f"视频参考（video_reference）只有 MiniMax H3 / H3 Max 支持；"
+                           f"请把 model_name 换成「MiniMax-Hailuo-03」或「H3 Max」。"),
+                )
+
         client = await self._ensure_client()
         try:
             r = await client.post(f"{self.BASE_URL}/video_generation",

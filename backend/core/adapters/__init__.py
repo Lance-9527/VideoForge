@@ -25,6 +25,11 @@ class VideoGenRequest:
     first_frame: Optional[str] = None     # 首帧图 URL 或本地路径
     last_frame: Optional[str] = None      # 尾帧图
 
+    # ★ 视频参考（白膜/Previz 驱动运镜）。MiniMax H3、Seedance 2.5、可灵 O1 等
+    #   支持把"控制信号视频"当参考输入；旧模型（I2V-01 / T2V-01 / Hailuo-02 /
+    #   video-01）不接受，会在 adapter 里被静默跳过或按 capability 报错。
+    video_url: Optional[str] = None       # 白膜视频 URL 或本地路径
+
     # 角色一致性
     character_reference: List[str] = field(default_factory=list)
 
@@ -448,7 +453,7 @@ import importlib as _importlib
 
 _KNOWN_ADAPTERS = [
     "cogvideox", "hailuo", "jimeng", "kling", "luma",
-    "minimax", "pika", "runway", "seedance", "sora", "wanx",
+    "minimax", "pika", "runway", "seedance", "seedance_t6", "sora", "wanx",
 ]
 
 

@@ -1078,12 +1078,22 @@ def create_app(db_path: str = None) -> FastAPI:
                 from core.adapters import get_adapter, VideoGenRequest, to_image_ref
                 adapter = get_adapter(provider, api_key=api_key, config={"model_name": model_name})
                 ref = to_image_ref(sc.get("reference_image_path") or "")
+                # ★ 视频参考（白膜/Previz 驱动运镜）。从场景的
+                #   reference_features.video_reference.path 读白膜视频路径，
+                #   转成可被 adapter 接受的 URL 形式（to_image_ref 同样支持
+                #   视频路径，会按需上传到厂商 CDN）。adapter 端会按模型能力
+                #   决定是否真把 video_url 传给后端（仅 H3 / Seedance 2.5 等
+                #   真支持视频参考的模型会用；其它模型会清晰报错而不是静默丢）。
+                _vref = (sc.get("reference_features") or {}).get("video_reference") or {}
+                _video_path = _vref.get("path") or ""
+                video_url = to_image_ref(_video_path) if _video_path else None
                 req = VideoGenRequest(
                     prompt=prompt,
                     duration=max(adapter.min_duration or 1, min(duration, adapter.max_duration or 10)),
                     aspect_ratio=payload.get("aspect_ratio") or "16:9",
                     resolution=payload.get("resolution") or "1080p",
                     first_frame=ref or None,
+                    video_url=video_url or None,
                 )
                 verr = adapter.validate_request(req)
                 if verr:

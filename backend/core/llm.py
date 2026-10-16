@@ -61,6 +61,9 @@ PROVIDER_ENDPOINTS: Dict[str, Dict[str, str]] = {
     "moonshot":  {"base_url": "https://api.moonshot.cn",                        "path": "/v1/chat/completions", "default_model": "moonshot-v1-8k"},
     "doubao":    {"base_url": "https://ark.cn-beijing.volces.com/api/v3",       "path": "/chat/completions",    "default_model": ""},
     "hunyuan":   {"base_url": "https://api.hunyuan.cloud.tencent.com",          "path": "/v1/chat/completions", "default_model": "hunyuan-turbo"},
+    # OpenRouter（OpenAI 兼容聚合；多个免费 model 标 ":free" 后缀）
+    # key 放 .env 里 OPENROUTER_API_KEY；model 字段在设置里手动选（如 "nex-agi/nex-n2.5-pro:free"）
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1",                  "path": "/chat/completions",    "default_model": "nex-agi/nex-n2.5-mini:free"},
 }
 
 # provider 名规范化：前端传 "MiniMax" / "MiniMax-Text-01" 等大小写混写
@@ -72,6 +75,7 @@ _PROVIDER_ALIASES = {
     "doubao": "doubao", "volcengine": "doubao", "ark": "doubao",
     "hunyuan": "hunyuan", "tencent": "hunyuan",
     "deepseek": "deepseek", "openai": "openai", "ollama": "ollama",
+    "openrouter": "openrouter", "or": "openrouter", "nex": "openrouter", "nex-agi": "openrouter",
 }
 
 

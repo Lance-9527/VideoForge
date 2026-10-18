@@ -20,10 +20,17 @@ VideoForge 是一个 Windows 桌面 AI 短片 Agent，把你的一句话想法�
 ## ✨ 特性
 
 ### 多 provider 是设计核心
-- **11 个视频模型适配器**：CogVideoX / Hailuo / Jimeng / Kling / Luma / MiniMax / Pika / Runway / Sora / WanX / Seedance 2.0 / 2.0-fast / 2.5
+- **12 个视频模型适配器**：CogVideoX / Hailuo / Jimeng / **Hailuo-03 (H3) / H3 Max 视频参考** / Kling / Luma / MiniMax / Pika / Runway / Sora / WanX / Seedance 2.0 / 2.0-fast / 2.5 / **Seedance 2.0 via token6688 网关**（独立 `seedance_t6` provider）
 - **5 个 TTS 提供商**：Edge TTS（无需 key）/ SiliconFlow / MiniMax / DashScope / Silent（占位）
-- **多家 LLM**：MiniMax / DeepSeek / OpenAI 兼容 / Qwen / GLM / Kimi / Doubao / Ollama（本地）
+- **8 种 LLM**：MiniMax / DeepSeek / OpenAI 兼容 / Qwen / GLM / Kimi / Doubao / Ollama（本地）/ **OpenRouter**（聚合 OpenAI 兼容 + 免费 `:free` 模型如 `nex-agi/nex-n2.5-mini:free`）
 - 按项目切换 provider，不用重写提示词
+
+### 🚀 1.3.0 新功能 (2026-10-16)
+- **MiniMax Hailuo-03 (H3) / H3 Max 视频参考支持**：白膜（Previz）视频可作为 `video_reference` 喂给海螺 H3，模型按白膜的运镜 / 节奏 / 走位渲染实拍；旧模型（Hailuo-02 / 2.3 / 01）保留并给清晰中文错误「请换成 Hailuo-03」
+- **通用 `video_url` 字段**（`VideoGenRequest`）：5 个 adapter 都能用，下游是否真把它当 `video_reference` 走由各 adapter 自身按能力表判断（护栏而不是默默丢）
+- **场景 `video_reference` 自动联动**：`generate_scene_video` 自动从场景的 `reference_features.video_reference.path` 读取白膜视频并喂给 adapter
+- **OpenRouter LLM provider**（`backend/core/llm.py`）：聚合 OpenAI 兼容的免费模型（标 `:free` 后缀），配套 `.env.example` 加 `OPENROUTER_API_KEY`；别名 `or` / `nex` / `nex-agi` 都能识别
+- **Seedance 2.0 via token6688 网关**（`backend/core/adapters/seedance_t6.py`）：独立 `seedance_t6` provider，BASE_URL 走 token6688 网关 (`https://agentai.token6688.com/api/v3`)，key 走 settings，**绝不写进源码**
 
 ### 生产级流水线
 - 剧本生成 **强制总时长**（告别"我要 5 秒给了 60 秒"）

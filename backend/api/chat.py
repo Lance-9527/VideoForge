@@ -203,6 +203,72 @@ async def handle_action(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/canonical-characters")
+async def get_canonical_characters_endpoint(project_id: str):
+    """取项目里**用户主动给定为基准**的角色（一致性第一优先级）。
+
+    ★ v1.4.2：agent 生成脚本/分镜时会把这些角色注入 LLM 上下文，
+      保证"用用户给定的那个角色"，而不是"项目里最常见的那个"。
+    """
+    from main import get_app_state
+    db = get_app_state()["db"]
+    chars = db.get_canonical_characters(project_id)
+    return {
+        "characters": [
+            {
+                "id": c.get("id"),
+                "name": c.get("name"),
+                "description": c.get("description"),
+                "costume_main": c.get("costume_main"),
+                "reference_image_path": c.get("reference_image_path"),
+            }
+            for c in chars
+        ],
+        "total": len(chars),
+    }
+
+
+@router.get("/validate-continuity")
+async def validate_continuity_endpoint(project_id: str):
+    """生成前的**阻断式**一致性 + 转镜体检。
+
+    ★ v1.4.2：原来只有 diff_shots()（只报告），用户照样能点生成。
+      现在 fatal（换模型/画幅不一致）直接拦下，并给出统一建议。
+    """
+    from main import get_app_state
+    from core.consistency import validate_consistency, plan_unify, consistency_brief
+    from core.continuity import chain_plan
+
+    db = get_app_state()["db"]
+    shots = db.list_shots(project_id) if hasattr(db, "list_shots") else []
+    if not shots:
+        return {"ok": True, "message": "项目还没有分镜", "shots": 0}
+
+    try:
+        report = validate_consistency(shots, project_id=project_id, db=db)
+    except Exception as e:
+        type_name = type(e).__name__
+        if type_name == "ConsistencyError":
+            return {
+                "ok": False,
+                "blocked": True,
+                "message": str(e),
+                "report": getattr(e, "report", {}),
+            }
+        raise
+
+    plan = chain_plan(shots)
+    return {
+        "ok": True,
+        "blocked": False,
+        "shots": len(shots),
+        "report": report,
+        "brief": consistency_brief(shots),
+        "chain_plan": plan,
+        "unify_plan": plan_unify(shots),
+    }
+
+
 @router.get("/actions/pending")
 async def list_pending_actions(current_user: dict = Depends(get_current_user)):
     """

@@ -82,6 +82,7 @@ class Database:
         self._ensure_column("tasks", "progress_message", "TEXT")
         self._ensure_column("tasks", "cancellable",      "INTEGER DEFAULT 1")
 
+
         # 项目
         conn.execute("""
         CREATE TABLE IF NOT EXISTS projects (
@@ -125,6 +126,14 @@ class Database:
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
+        # ── v1.4.2: User-defined canonical 标记 ──────────────────────
+        # ★ 为什么需要：一致性基准原来用"项目内多数派"（canonical_from_shots），
+        #   但用户**主动给定**的角色（上传了参考图 / 明确写了外观）应该优先。
+        #   没有这个标记时，用户给的和 LLM 生成的混在一起，多数派会把
+        #   LLM 生成的当基准 —— 用户的意图被稀释。
+        # ★ 必须放在 CREATE TABLE 之后：表还不存在时 ALTER TABLE 会静默失败。
+        self._ensure_column("characters", "is_canonical", "INTEGER DEFAULT 0")
+
         # 场景
         conn.execute("""
         CREATE TABLE IF NOT EXISTS scenes (
@@ -147,6 +156,7 @@ class Database:
         # ★ 老库补列：场景也要存「固定槽位」（地形/建筑/陈设/氛围/色调），
         #   否则同一地点在不同镜头里的环境描述会各写各的，场景看起来会变样。
         self._ensure_column("scenes", "reference_features", "JSON")
+        self._ensure_column("scenes", "is_canonical", "INTEGER DEFAULT 0")
         # 道具
         conn.execute("""
         CREATE TABLE IF NOT EXISTS props (
@@ -490,6 +500,53 @@ class Database:
             (project_id,),
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
+
+    def get_canonical_characters(self, project_id: str) -> List[Dict[str, Any]]:
+        """取项目里**用户指定为基准**的角色。
+
+        ★ 这是 v1.4.2 的核心：一致性基准的第一优先级。
+        用户主动给定（is_canonical=1）的角色 > 项目内多数派推断。
+        """
+        rows = self._execute(
+            "SELECT * FROM characters WHERE project_id = ? AND is_canonical = 1 "
+            "ORDER BY created_at",
+            (project_id,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = self._row_to_dict(r)
+            if isinstance(d.get("reference_features"), str):
+                try:
+                    d["reference_features"] = json.loads(d["reference_features"] or "{}")
+                except Exception:
+                    d["reference_features"] = {}
+            out.append(d)
+        return out
+
+    def get_canonical_scenes(self, project_id: str) -> List[Dict[str, Any]]:
+        """取项目里用户指定为基准的场景（同 get_canonical_characters）。"""
+        rows = self._execute(
+            "SELECT * FROM scenes WHERE project_id = ? AND is_canonical = 1 "
+            "ORDER BY created_at",
+            (project_id,),
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def set_character_canonical(self, cid: str, is_canonical: bool = True) -> Optional[Dict[str, Any]]:
+        """把角色标记/取消标记为"用户给定的基准"。"""
+        self._execute(
+            "UPDATE characters SET is_canonical = ? WHERE id = ?",
+            (1 if is_canonical else 0, cid),
+        )
+        return self.get_character(cid)
+
+    def set_scene_canonical(self, sid: str, is_canonical: bool = True) -> Optional[Dict[str, Any]]:
+        """把场景标记/取消标记为"用户给定的基准"。"""
+        self._execute(
+            "UPDATE scenes SET is_canonical = ? WHERE id = ?",
+            (1 if is_canonical else 0, sid),
+        )
+        return self.get_scene(sid)
 
     def update_character(self, cid: str, **kwargs) -> Optional[Dict[str, Any]]:
         if not kwargs:

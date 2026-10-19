@@ -391,11 +391,27 @@ def chain_plan(shots: List[Dict[str, Any]], *,
                     f"当前模型（{provider}/{model}）不支持首帧输入，无法用尾帧串联；"
                     f"建议切换到支持「图生视频」的版本，同一场戏的镜头才不会跳。")
 
+        # ★ v1.4.2: 把"这一镜的首帧必须长什么样"显式写进计划。
+        #   原来只有 use_last_frame_of（哪个镜头的尾帧）—— 生成时没人读它，
+        #   提示词里也没提，所以"转镜要接得上"这件事其实没被强制。
+        #   现在给出一条人类可读的硬约束，直接进 prompt。
+        must_match = ""
+        if use_prev:
+            must_match = (
+                f"本镜首帧必须接上一镜（{prev.get('id')}）的尾帧："
+                f"保持角色位置/朝向/光位/构图连续，不要跳轴、不要换景别")
+        elif brief.get("same_scene"):
+            must_match = "本镜与上一镜同场景：光线/天气/色调必须完全一致，只改机位与动作"
+
         out.append({
             "shot_id": sh.get("id"),
             "order_index": sh.get("order_index"),
             "use_last_frame_of": use_prev,
             "transition": trans,
+            # v1.4.2 新增：给生成端直接用的强约束
+            "prev_shot_id": prev.get("id") if prev else None,
+            "transition_type": (trans or {}).get("type", "none") if isinstance(trans, dict) else str(trans),
+            "must_match_first_frame_desc": must_match,
             "same_scene_as_prev": bool(brief.get("same_scene")),
             "carry": brief.get("carry") or {},
             "notes": brief.get("notes") or [],

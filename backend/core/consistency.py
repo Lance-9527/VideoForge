@@ -51,7 +51,66 @@ LEVEL_ORDER = {"ok": 0, "minor": 1, "major": 2, "fatal": 3}
 LEVEL_ZH = {"ok": "一致", "minor": "建议统一", "major": "必须统一", "fatal": "必须统一"}
 
 
-def canonical_from_shots(shots: List[Dict[str, Any]], settings: Optional[dict] = None) -> Dict[str, Any]:
+def _canonical_from_user_defined(project_id: Optional[str], db: Optional[Any] = None) -> Dict[str, Any]:
+    """取项目里用户主动给定为基准的角色/场景。
+
+    ★ v1.4.2：一致性的第一优先级。
+    用户上传了参考图 / 明确写了外观描述的角色和场景，
+    就是"这部片子应该长什么样"的锚点 —— 比"项目内多数派"更可信。
+
+    拿不到 db 时静默返回空 dict（调用方会 fallback 到多数派推断）。
+    """
+    out: Dict[str, Any] = {"characters": [], "scenes": []}
+    if not project_id:
+        return out
+    try:
+        if db is None:
+            from main import get_app_state
+            db = get_app_state()["db"]
+        chars = db.get_canonical_characters(project_id)
+        scenes = db.get_canonical_scenes(project_id)
+        out["characters"] = [
+            {
+                "id": ch.get("id", ""),
+                "name": ch.get("name", ""),
+                "description": ch.get("description", ""),
+                "costume_main": ch.get("costume_main", ""),
+                "reference_image_path": ch.get("reference_image_path", ""),
+                "source": "user_defined",
+            }
+            for ch in (chars or [])
+        ]
+        out["scenes"] = [
+            {
+                "id": sc.get("id", ""),
+                "name": sc.get("name", ""),
+                "description": sc.get("description", ""),
+                "source": "user_defined",
+            }
+            for sc in (scenes or [])
+        ]
+    except Exception:
+        return {"characters": [], "scenes": []}
+    return out
+
+
+
+class ConsistencyError(RuntimeError):
+    """一致性硬错误：生成条件偏离基准且**不允许**继续。
+
+    ★ v1.4.2：原来 diff_shots() 只报告不阻断，用户点"生成"照样出片，
+      结果成片里出现"两个世界"。现在 fatal 级别直接拒绝，
+      必须先按 plan_unify() 的建议改回来。
+    """
+
+    def __init__(self, message: str, report: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.report = report or {}
+
+
+def canonical_from_shots(shots: List[Dict[str, Any]], settings: Optional[dict] = None,
+                        project_id: Optional[str] = None,
+                        db: Optional[Any] = None) -> Dict[str, Any]:
     """从现有分镜里推一份"主流生成条件"当基准。
 
     用**多数派**而不是第一个：用户可能先试了一个模型、后来统一换成另一个，
@@ -59,14 +118,21 @@ def canonical_from_shots(shots: List[Dict[str, Any]], settings: Optional[dict] =
     平票时优先取"有视频产物的那些分镜"用的条件 —— 那些是真正跑通过、
     用户看过的，比没出过片的设置更可信。
     """
+    # ★ v1.4.2: 用户给定的 canonical 优先。
+    #   原来的基准是"项目内多数派"（pick()）—— 用户上传了参考图的角色
+    #   可能只出现 1 次，多数派会把它当"少数派"忽略掉，用户意图被稀释。
+    #   现在：先把 is_canonical=1 的角色/场景挑出来写进 canon。
+    canon = _canonical_from_user_defined(project_id, db)
+
     if not shots:
         s = settings or {}
-        return {
-            "model_provider": s.get("default_model_provider") or "",
-            "model_name": s.get("default_model_name") or "",
-            "resolution": s.get("default_resolution") or "",
-            "aspect_ratio": s.get("default_aspect_ratio") or "",
-        }
+        canon.update({
+            "model_provider": s.get("default_model_provider") or canon.get("model_provider", ""),
+            "model_name": s.get("default_model_name") or canon.get("model_name", ""),
+            "resolution": s.get("default_resolution") or canon.get("resolution", ""),
+            "aspect_ratio": s.get("default_aspect_ratio") or canon.get("aspect_ratio", ""),
+        })
+        return canon
 
     def pick(field: str) -> str:
         vals = [str(x.get(field) or "") for x in shots]
@@ -87,12 +153,14 @@ def canonical_from_shots(shots: List[Dict[str, Any]], settings: Optional[dict] =
                 return t
         return sorted(tied)[0]
 
-    return {
-        "model_provider": pick("model_provider"),
-        "model_name": pick("model_name"),
-        "resolution": pick("resolution"),
-        "aspect_ratio": pick("aspect_ratio"),
-    }
+    # 用户给定的 model 条件优先（如果用户在角色卡里指定了用哪个模型出图）
+    canon.update({
+        "model_provider": pick("model_provider") or canon.get("model_provider", ""),
+        "model_name": pick("model_name") or canon.get("model_name", ""),
+        "resolution": pick("resolution") or canon.get("resolution", ""),
+        "aspect_ratio": pick("aspect_ratio") or canon.get("aspect_ratio", ""),
+    })
+    return canon
 
 
 def severity(shot: Dict[str, Any], canon: Dict[str, Any]) -> Tuple[str, List[str]]:
@@ -236,6 +304,38 @@ def consistency_brief(shots: List[Dict[str, Any]]) -> str:
     return (f"生成条件**不一致**：{n['fatal']} 个换了模型、{n['major']} 个画幅不同、"
             f"{n['minor']} 个分辨率不同 —— 拼接会出现「两个世界」的接缝")
 
+
+def validate_consistency(shots: List[Dict[str, Any]],
+                         canon: Optional[Dict[str, Any]] = None,
+                         project_id: Optional[str] = None,
+                         db: Optional[Any] = None,
+                         allow_fatal: bool = False) -> Dict[str, Any]:
+    """生成前的**阻断式**一致性检查。
+
+    ★ 与 diff_shots() 的区别：
+        diff_shots()   = 体检报告（只说，不拦）
+        validate_consistency() = 闸门（fatal 就抛，不让生成）
+
+    ★ v1.4.2：用户需求"角色+场景+声音一致性"要的是"真的拦住"，
+      不是"给个提示然后照样出片"。
+    """
+    if canon is None:
+        canon = canonical_from_shots(shots, project_id=project_id, db=db)
+    rep = diff_shots(shots, canon)
+    if rep.get("worst_level") == "fatal" and not allow_fatal:
+        items = rep.get("deviations", [])
+        bad = [d for d in items if d.get("level") == "fatal"]
+        reasons = []
+        for d in bad[:5]:
+            reasons.append(f"第 {d.get('index')} 镜：" + "、".join(d.get("reasons", [])))
+        _nl = chr(10)
+        msg = ("生成条件不一致，已阻止生成：" + _nl + "  "
+               + (_nl + "  ").join(reasons)
+               + _nl + "不同模型 = 不同画风与色彩科学，后期调色补不回来。"
+                 "请先按建议统一成「"
+               + str(canon.get("model_name") or "项目主流模型") + "」再生成。")
+        raise ConsistencyError(msg, rep)
+    return rep
 
 def default_shot_conditions(settings: Dict[str, Any],
                             project_shots: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:

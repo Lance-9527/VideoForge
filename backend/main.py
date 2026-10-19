@@ -92,6 +92,7 @@ from core.postprocess import (
     generate_srt_from_timeline,
 )
 from api.chat import router as chat_router
+from api.characters import router as characters_router
 from core.agent import ConversationAgent
 from core.llm import LLMClient
 
@@ -308,6 +309,7 @@ def create_app(db_path: str = None) -> FastAPI:
 
     # 注册对话路由
     app.include_router(chat_router)
+    app.include_router(characters_router)
 
     # FFmpeg 智能获取（优先使用 launcher 传入的环境变量）
     import os as _os

@@ -44,6 +44,12 @@ async def generate_shot_handler(payload: Dict[str, Any],
     num_candidates = payload.get("num_candidates", 4)
     override_provider = payload.get("model_provider")
     override_model = payload.get("model_name")
+    # ★ v1.4.2: 转镜强约束（chain_config）
+    #   agent 侧算好 chain_plan 后把当前镜的约束塞进 payload：
+    #     {prev_shot_id, transition_type, must_match_first_frame_desc}
+    #   这里把它写进 shot.reference_features['chain'] 并**注入提示词** ——
+    #   原来 chain_plan 算出来的约束没人读，等于白算。
+    chain_config = payload.get("chain_config") or {}
 
     update = make_progress_updater(payload.get("_task_id", ""), db, progress_callbacks)
 
@@ -54,6 +60,26 @@ async def generate_shot_handler(payload: Dict[str, Any],
     # 更新 shot 状态
     db.update_shot(shot_id, status="generating", progress=0.0)
     update(0.05, "准备生成")
+
+    # ★ v1.4.2: 把 chain 约束持久化到 shot（前端/后续检查能看到这一镜被要求接什么）
+    if chain_config:
+        try:
+            _shot = db.get_shot(shot_id) or {}
+            _rf = _shot.get("reference_features")
+            if isinstance(_rf, str):
+                try:
+                    _rf = json.loads(_rf or "{}")
+                except Exception:
+                    _rf = {}
+            _rf = _rf or {}
+            _rf["chain"] = {
+                "prev_shot_id": chain_config.get("prev_shot_id"),
+                "transition_type": chain_config.get("transition_type", "none"),
+                "must_match_first_frame_desc": chain_config.get("must_match_first_frame_desc", ""),
+            }
+            db.update_shot(shot_id, reference_features=json.dumps(_rf, ensure_ascii=False))
+        except Exception as e:
+            logger.warning("写入 chain 约束失败: %s", e)
 
     # 获取适配器
     provider = override_provider or shot["model_provider"]
@@ -85,6 +111,17 @@ async def generate_shot_handler(payload: Dict[str, Any],
 
     # 拼装完整提示词（三层）
     full_prompt = _compose_full_prompt(shot)
+
+    # ★ v1.4.2: 转镜约束进提示词（这是"衔接丝滑"真正落地的一步）
+    _chain_notes = []
+    _must = chain_config.get("must_match_first_frame_desc")
+    if _must:
+        _chain_notes.append(f"[转镜衔接] {_must}")
+    _t_type = chain_config.get("transition_type")
+    if _t_type and _t_type != "none":
+        _chain_notes.append(f"[转场方式] {_t_type}")
+    if _chain_notes:
+        full_prompt = full_prompt + (chr(10) * 2) + (chr(10)).join(_chain_notes)
 
     req = VideoGenRequest(
         prompt=full_prompt,

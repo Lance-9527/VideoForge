@@ -5,6 +5,9 @@ from typing import AsyncGenerator, Dict, Any, Optional, Callable
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+# v1.4.2: TaskState 用来等 task 跑完（原来漏 import 导致 agent 直接报错）
+from core.task_queue import TaskState
+
 # llm 和 task_queue 在 __init__ 时注入
 
 
@@ -13,36 +16,36 @@ from pydantic import BaseModel, Field
 # ============================================================================
 
 class BaseEvent(BaseModel):
-    event_type: str
+    type: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 class TextEvent(BaseEvent):
-    event_type: str = "text"
+    type: str = "text"
     content: str
 
 class ProgressEvent(BaseEvent):
-    event_type: str = "progress"
+    type: str = "progress"
     stage: str
     progress: float  # 0.0 ~ 1.0
 
 class ImageEvent(BaseEvent):
-    event_type: str = "image"
+    type: str = "image"
     url: str
     caption: Optional[str] = None
 
 class VideoEvent(BaseEvent):
-    event_type: str = "video"
+    type: str = "video"
     url: str
     duration: Optional[float] = None
 
 class ActionRequiredEvent(BaseEvent):
-    event_type: str = "action_required"
+    type: str = "action_required"
     action_id: str
     prompt: str
     choices: list[Dict[str, str]]  # [{"id": "approve", "label": "确认"}, ...]
 
 class DoneEvent(BaseEvent):
-    event_type: str = "done"
+    type: str = "done"
 
 
 # ============================================================================
@@ -85,6 +88,44 @@ class ConversationAgent:
     # ------------------------------------------------------------------------
     # 1. 生成视频 Pipeline
     # ------------------------------------------------------------------------
+    # ──────────── v1.4.2 辅助 ────────────
+
+    def _canonical_characters(self, project_id: str) -> List[Dict[str, Any]]:
+        """取项目里用户主动给定为基准的角色。
+
+        ★ 拿不到时静默返回空 list（上层会 fallback 到"项目内多数派"）。
+        """
+        if not project_id:
+            return []
+        try:
+            from main import get_app_state
+            db = get_app_state()["db"]
+            return db.get_canonical_characters(project_id) or []
+        except Exception:
+            return []
+
+    def _chain_config_for(self, shots: List[Dict[str, Any]], index: int) -> Dict[str, Any]:
+        """算第 index 个镜头的转镜强约束（prev_shot_id / transition / must_match）。
+
+        ★ v1.4.2：把 core.continuity.chain_plan() 算出来的约束真正用起来 ——
+          原来 chain_plan 的结果没人读，"转镜要接得上"其实没被强制。
+        """
+        if index <= 0 or index >= len(shots):
+            return {}
+        try:
+            from core.continuity import chain_plan
+            plan = chain_plan(shots[: index + 1])
+            for item in plan:
+                if item.get("shot_id") == shots[index].get("id"):
+                    return {
+                        "prev_shot_id": item.get("prev_shot_id"),
+                        "transition_type": item.get("transition_type", "none"),
+                        "must_match_first_frame_desc": item.get("must_match_first_frame_desc", ""),
+                    }
+        except Exception:
+            pass
+        return {}
+
     async def _generate_video_pipeline(
         self,
         params: Dict[str, Any],
@@ -100,9 +141,26 @@ class ConversationAgent:
             # Step 1: 生成脚本
             yield ProgressEvent(stage="script_generation", progress=0.0)
             
+            # ★ v1.4.2: 把**用户主动给定**的角色注入脚本生成。
+            #   用户上传了参考图 / 明确写了外观的角色优先于"项目内多数派"，
+            #   否则用户给的那份设定会被 LLM 自己生成的角色盖掉。
+            user_prompt = params.get("prompt", "")
+            canonical_chars = self._canonical_characters(project_id)
+            if canonical_chars:
+                _lines = (chr(10)).join(
+                    f"- {ch.get('name', '')}: {ch.get('description', '') or '（见参考图）'}"
+                    f"{'｜主服装：' + ch['costume_main'] if ch.get('costume_main') else ''}"
+                    for ch in canonical_chars
+                )
+                user_prompt = (
+                    user_prompt
+                    + (chr(10) * 2) + "【必须使用的角色（用户已指定，不要改名或改外观）】" + (chr(10))
+                    + _lines
+                )
+
             script_payload = {
                 "project_id": project_id,
-                "user_prompt": params.get("prompt", ""),
+                "user_prompt": user_prompt,
                 "style": params.get("style", "cinematic"),
                 "duration": params.get("duration", 30)
             }
@@ -114,7 +172,7 @@ class ConversationAgent:
             )
             
             # 等待脚本生成完成
-            while script_handle.state not in [TaskState.COMPLETED, TaskState.FAILED]:
+            while script_handle.state not in [TaskState.SUCCESS, TaskState.FAILED]:
                 await asyncio.sleep(0.5)
             
             if script_handle.state == TaskState.FAILED:
@@ -146,6 +204,11 @@ class ConversationAgent:
                     "model_name": params.get("model_name", "gen3")
                 }
                 
+                # ★ v1.4.2: 转镜强约束注入 —— 这一镜要接上一镜的尾帧
+                _chain = self._chain_config_for(shots, i)
+                if _chain:
+                    shot_payload["chain_config"] = _chain
+                
                 shot_handle = self.orch.submit(
                     task_id=f"shot_{shot_id}_{uuid.uuid4().hex[:8]}",
                     task_type="generate_shot",
@@ -160,7 +223,7 @@ class ConversationAgent:
                 shot_handle.add_progress_callback(on_progress)
                 
                 # 等待镜头生成完成
-                while shot_handle.state not in [TaskState.COMPLETED, TaskState.FAILED]:
+                while shot_handle.state not in [TaskState.SUCCESS, TaskState.FAILED]:
                     await asyncio.sleep(0.5)
                     # 推送最新进度
                     if progress_events:
@@ -330,7 +393,7 @@ class ConversationAgent:
                 payload=script_payload
             )
             
-            while script_handle.state not in [TaskState.COMPLETED, TaskState.FAILED]:
+            while script_handle.state not in [TaskState.SUCCESS, TaskState.FAILED]:
                 await asyncio.sleep(0.3)
             
             if script_handle.state == TaskState.FAILED:
@@ -443,7 +506,7 @@ class ConversationAgent:
             refine_handle.add_progress_callback(on_progress)
             
             # 等待完成
-            while refine_handle.state not in [TaskState.COMPLETED, TaskState.FAILED]:
+            while refine_handle.state not in [TaskState.SUCCESS, TaskState.FAILED]:
                 await asyncio.sleep(0.5)
             
             if refine_handle.state == TaskState.FAILED:
@@ -481,3 +544,6 @@ class ConversationAgent:
         if action_id in self._pending_actions:
             self._pending_actions[action_id].set()
 
+
+# ★ v1.4.2 兼容别名：api/chat.py 用 `AgentEvent` 做类型标注
+AgentEvent = BaseEvent

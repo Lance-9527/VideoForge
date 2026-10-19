@@ -251,8 +251,9 @@ async def handle_action(
         action_data = PENDING_ACTIONS[action_id]
         agent: ConversationAgent = action_data["agent"]
         
-        # 解锁 Agent 的等待
-        agent.resolve_action(action_id, choice)
+        # ★ v1.4.3: 方法名错 —— agent 里叫 respond_to_action(action_id, response)，
+        #   这里调的 resolve_action 不存在 -> 点确认按钮必然 AttributeError。
+        agent.respond_to_action(action_id, {"choice": choice})
         
         # 清理
         del PENDING_ACTIONS[action_id]

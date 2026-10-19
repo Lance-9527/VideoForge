@@ -81,7 +81,8 @@ def _dur(v: Any) -> Optional[int]:
 def fit_scenes(scenes: Optional[List[Dict[str, Any]]], total: int,
                *, min_scene: int = MIN_SCENE_SECONDS,
                preferred: int = PREFERRED_SCENE_SECONDS,
-               cap: int = SCENE_CAP) -> Dict[str, Any]:
+               cap: int = SCENE_CAP,
+               scene_count: Optional[int] = None) -> Dict[str, Any]:
     """把 LLM 给的场次**强制**排成"总时长 = 目标时长"，并如实报告改了什么。
 
     返回：
@@ -99,7 +100,16 @@ def fit_scenes(scenes: Optional[List[Dict[str, Any]]], total: int,
     """
     src = [s for s in (scenes or []) if isinstance(s, dict)]
     total = int(total)
+    # ★ v1.4.3: 用户**明确说了**几个镜头，就按几个排。
+    #   原来只按总时长自动算（10 秒 -> 1 场），用户说"2 个镜头"被无视了。
     want_n = scene_count_for(total, min_scene=min_scene, preferred=preferred, cap=cap)
+    if scene_count:
+        try:
+            _want = int(scene_count)
+            if _want >= 1:
+                want_n = min(_want, cap)
+        except Exception:
+            pass
     before_total = 0
     for s in src:
         d = _dur(s.get("duration_seconds"))

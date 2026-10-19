@@ -353,6 +353,8 @@ def default_shot_conditions(settings: Dict[str, Any],
     return {
         "model_provider": s.get("default_model_provider") or "",
         "model_name": s.get("default_model_name") or "",
-        "resolution": s.get("default_resolution") or "1080P",
+        # ★ v1.4.4: 支持 default_video_resolution（用户省钱用的就是 480p）
+        "resolution": (s.get("default_video_resolution")
+                       or s.get("default_resolution") or "1080p"),
         "aspect_ratio": s.get("default_aspect_ratio") or "16:9",
     }

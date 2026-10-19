@@ -78,6 +78,35 @@ def _make_preview_frame(local_path: Optional[str], db=None) -> Optional[str]:
         logger.debug("抽封面失败（不影响视频展示）: %s", e)
         return None
 
+
+def _extract_last_frame(video_path: str, shot_id: str = "") -> Optional[str]:
+    """从视频抽**最后一帧**存成 jpg，返回本地路径。
+
+    ★ v1.4.4："尾帧接力"的真正实现 —— 上一镜的最后一格画面，
+      就是本镜首帧该接住的东西。ffmpeg 用 -sseof -1 取尾部 1 秒再取首帧。
+    """
+    if not video_path or not os.path.exists(str(video_path)):
+        return None
+    try:
+        import subprocess
+        out = os.path.join(os.path.dirname(str(video_path)),
+                           f"lastframe_{(shot_id or 'x')[:8]}.jpg")
+        if os.path.exists(out) and os.path.getsize(out) > 1000:
+            return out
+        ff = shutil.which("ffmpeg") or "ffmpeg"
+        subprocess.run(
+            [ff, "-y", "-hide_banner", "-loglevel", "error",
+             "-sseof", "-1", "-i", str(video_path),
+             "-frames:v", "1", "-q:v", "3", out],
+            check=True, capture_output=True, timeout=90,
+        )
+        if os.path.exists(out) and os.path.getsize(out) > 1000:
+            return out
+        return None
+    except Exception as e:
+        logger.debug("抽尾帧失败: %s", e)
+        return None
+
 @register_task("generate_shot")
 async def generate_shot_handler(payload: Dict[str, Any],
                                   progress_callbacks: List) -> Dict[str, Any]:
@@ -157,6 +186,29 @@ async def generate_shot_handler(payload: Dict[str, Any],
         if s and s.get("reference_image_path"):
             scene_ref = to_image_ref(s["reference_image_path"])
 
+    # ★ v1.4.3 尾帧接力（"衔接丝滑"的硬环节）
+    #   chain_config.use_last_frame_of = {"from_shot_id":..., "video": <上一镜视频路径>}
+    #   上一镜的**尾帧**直接当本镜的首帧 —— 提示词里写"要接得上"是软的，
+    #   真正把画面接住的是这张图。
+    chain_ref = None
+    _clo = (chain_config or {}).get("use_last_frame_of") or {}
+    _cv = _clo.get("video")
+    if _cv:
+        try:
+            if os.path.exists(str(_cv)):
+                # ★ v1.4.4: 首帧必须是**图片**，不能是视频文件！
+                #   原来直接把上一镜的 mp4 当 first_frame 传过去，
+                #   平台侧直接报 "build_body / 生成失败"。
+                #   正确做法：用 ffmpeg 抽上一镜的**最后一帧**当本镜首帧 ——
+                #   这才是真正的"尾帧接力"（画面能接住）。
+                _lf = _extract_last_frame(str(_cv), shot_id)
+                if _lf:
+                    # 本地路径要转 data URI —— 平台只认 URL / data URI
+                    chain_ref = to_image_ref(_lf)
+
+        except Exception as _fe:
+            logger.warning("抽上一镜尾帧失败（该镜改用场景图/无首帧）: %s", _fe)
+
     # 拼装完整提示词（三层）
     full_prompt = _compose_full_prompt(shot)
 
@@ -231,7 +283,9 @@ async def generate_shot_handler(payload: Dict[str, Any],
         aspect_ratio=shot["aspect_ratio"],
         resolution=_res,
         reference_images=char_refs,
-        first_frame=scene_ref,  # 场景图作为首帧
+        # ★ v1.4.3: 首帧优先级 = 上一镜尾帧 > 场景图。
+        #   尾帧接住上一镜的最后一格画面，场景图保证同场景一致。
+        first_frame=chain_ref or scene_ref,
         character_reference=char_refs,
         negative_prompt="\n".join(shot.get("layer3_constraints", {}).get("must_not_appear", [])),
     )
@@ -350,15 +404,24 @@ async def generate_script_handler(payload: Dict[str, Any],
     #   用户要的秒数（与 `/api/projects/{pid}/script/generate` 同一条规矩）。
     #   两条入口要是各写一套，就会出现"从这条进对、从那条进不对"的鬼故事。
     from core import scriptplan as _sp
-    _want = int(payload.get("total_duration", 30) or 30)
+    # ★ v1.4.3: 兼容 "total_duration" / "duration" 两种字段名
+    #   （agent 之前传的是 duration，这里读 total_duration -> 静默用 30 秒）
+    _want = int(payload.get("total_duration") or payload.get("duration") or 30)
     result = await svc.generate_script(
         user_prompt=payload["user_prompt"],
         total_duration=_want,
         style=payload.get("style", "cinematic"),
         auto_split=True,
-        scene_count=_sp.scene_count_for(_want),
+        # ★ v1.4.4: 用户明确说了几个镜头就按几个生成场次。
+        #   原来只用 scene_count_for(总时长) 自动算 —— 用户说"2 个镜头"
+        #   被无视（10 秒自动排成 1 场）。这个 scene_count 同时会写进
+        #   LLM 提示词的"必须正好 N 场"，所以这里改了对整条链都生效。
+        scene_count=(int(payload.get("scene_count"))
+                    if payload.get("scene_count") else _sp.scene_count_for(_want)),
     )
-    _fit = _sp.fit_scenes(result.get("scenes"), _want)
+    # ★ v1.4.3: 用户明确说"2 个镜头"就排 2 场（原来只按总时长自动算 -> 10 秒排成 1 场）
+    _fit = _sp.fit_scenes(result.get("scenes"), _want,
+                         scene_count=payload.get("scene_count"))
     if _fit.get("scenes"):
         result["scenes"] = _fit["scenes"]
     result["duration_plan"] = _sp.duration_brief(_fit)

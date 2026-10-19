@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import AsyncGenerator, Dict, Any, List, Optional, Callable
 from datetime import datetime
@@ -54,6 +55,106 @@ class DoneEvent(BaseEvent):
 # ConversationAgent
 # ============================================================================
 
+
+
+_CN_NUM = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+           "七": 7, "八": 8, "九": 9, "十": 10, "半": 1}
+
+
+def _extract_explicit_spec(text: str) -> Dict[str, Any]:
+    """从用户原话里直接抠出"多少秒 / 几个镜头"。
+
+    ★ v1.4.3: 不依赖 LLM 是否听话 —— 用户明确说了"10 秒、2 个镜头"，
+      这就是需求，**必须**被尊重。原来全靠 LLM 提取 intent，
+      LLM 漏一个字段就静默按默认值走（用户要 10 秒 -> 出了 30 秒）。
+    """
+    out: Dict[str, Any] = {}
+    raw = (text or "")
+    if not raw:
+        return out
+
+    # 秒数：10秒 / 10 秒钟 / 10s
+    m = re.search(r"(\d+)\s*(?:个)?\s*(?:秒|s(?![a-z]))", raw, re.IGNORECASE)
+    if m:
+        try:
+            n = int(m.group(1))
+            if 1 <= n <= 600:
+                out["duration"] = n
+        except Exception:
+            pass
+
+    # 镜头数：2个镜头 / 两个镜头 / 3镜 / 2 shots
+    m2 = re.search(r"(\d+)\s*(?:个)?\s*(?:镜头|镜|分镜|shot)", raw, re.IGNORECASE)
+    if m2:
+        try:
+            n = int(m2.group(1))
+            if 1 <= n <= 30:
+                out["scene_count"] = n
+        except Exception:
+            pass
+    else:
+        m3 = re.search(r"([一两二三四五六七八九十])\s*(?:个)?\s*(?:镜头|镜|分镜)", raw)
+        if m3 and m3.group(1) in _CN_NUM:
+            out["scene_count"] = _CN_NUM[m3.group(1)]
+
+    return out
+
+
+def _parse_character_suggestions(text: str) -> List[Dict[str, Any]]:
+    """把 LLM 的角色建议解析成 [{name, description}]。
+
+    ★ v1.4.3：角色建议可能是 JSON，也可能是一段 Markdown 列表。
+      两种都试；解析不出来就返回空（上层会只提示"已确认"而不建角色），
+      **不要**因为解析失败把整条流程搞崩。
+    """
+    out: List[Dict[str, Any]] = []
+    raw = (text or "").strip()
+    if not raw:
+        return out
+
+    # 1) JSON（含 ```json 包裹）
+    try:
+        t = raw
+        if t.startswith("```"):
+            t = t.split("```")[1]
+            if t.lower().startswith("json"):
+                t = t[4:]
+        obj = json.loads(t)
+        items = obj if isinstance(obj, list) else (obj.get("characters") if isinstance(obj, dict) else None)
+        for it in (items or []):
+            if isinstance(it, dict) and (it.get("name") or it.get("姓名")):
+                out.append({
+                    "name": str(it.get("name") or it.get("姓名") or "未命名角色"),
+                    "description": str(it.get("description") or it.get("描述")
+                                       or it.get("appearance") or it.get("外貌") or ""),
+                })
+        if out:
+            return out
+    except Exception:
+        pass
+
+    # 2) Markdown 列表：`- 名字：描述` / `1. 名字 - 描述`
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        s2 = s.lstrip("-*•0123456789. 、").strip()
+        if not s2:
+            continue
+        for sep in ("：", ":", "——", "—", " - "):
+            if sep in s2:
+                name, desc = s2.split(sep, 1)
+                name, desc = name.strip(), desc.strip()
+                # ★ v1.4.3: 去掉 Markdown 标记 —— LLM 常写成表格
+                #   | **阿诚** | ... |，取出来会变成"阿诚**"，
+                #   建出来的角色名带星号，后续提示词/文件名全是星号。
+                name = name.strip().strip("*` _").strip()
+                desc = desc.strip().strip("*` ").strip()
+                if name and len(name) <= 24:
+                    out.append({"name": name, "description": desc})
+                    break
+    return out
+
 class ConversationAgent:
     def __init__(self, llm, orchestrator):
         self.llm = llm
@@ -80,7 +181,7 @@ action 判定:
 - chat: 闲聊或无法判定
 
 params 按 action 给:
-- generate_video: {"prompt": 原话, "duration": 秒数(int, 默认 30), "style": "cinematic"}
+- generate_video: {"prompt": 原话, "duration": 秒数(int, 默认 30), "style": "cinematic", "scene_count": 镜头数(int，用户明确说了几个镜头才填，否则省略)}
 - suggest_characters: {"style_preference": "用户描述的风格"}
 - review_consistency: {}
 - refine_shot: {"shot_id": 镜号(int), "changes": "用户说的修改"}
@@ -112,6 +213,14 @@ params 按 action 给:
             "params": {"prompt": user_message, "duration": 30, "style": "cinematic"},
             "reasoning": "意图解析失败，按默认走生成流程",
         }
+        # ★ v1.4.4: 正则提取放在 try **外面** —— 原来它在 try 里，
+        #   LLM 的 JSON 一旦解析失败就直接 return default，
+        #   用户明确说的"10 秒、2 个镜头"也跟着丢了。
+        _spec = _extract_explicit_spec(user_message)
+        if _spec.get("duration"):
+            default["params"]["duration"] = _spec["duration"]
+        if _spec.get("scene_count"):
+            default["params"]["scene_count"] = _spec["scene_count"]
         try:
             resp = await self.llm.chat(
                 [
@@ -131,6 +240,11 @@ params 按 action 给:
             if not isinstance(parsed, dict) or "action" not in parsed:
                 return default
             parsed.setdefault("params", {})
+            # 用正则结果**覆盖** LLM 的（用户原话最权威）
+            if _spec.get("duration"):
+                parsed["params"]["duration"] = _spec["duration"]
+            if _spec.get("scene_count"):
+                parsed["params"]["scene_count"] = _spec["scene_count"]
             return parsed
         except Exception as e:
             logging.warning("意图解析失败，回退默认: %s", e)
@@ -189,6 +303,34 @@ params 按 action 给:
         except Exception:
             return []
 
+    def _selected_video_of(self, shot_row: Dict[str, Any]) -> str:
+        """取某个分镜**当前选中候选**的本地视频路径。
+
+        ★ v1.4.3: 尾帧接力要用它 —— 上一镜生成完，
+        #   candidates / selected_candidate_id 已经写进 DB。
+        """
+        try:
+            db = self._db()
+            if db is None:
+                return ""
+            s = db.get_shot(shot_row.get("id")) or shot_row
+            cands = s.get("candidates") or []
+            if isinstance(cands, str):
+                try:
+                    cands = json.loads(cands)
+                except Exception:
+                    cands = []
+            sel = s.get("selected_candidate_id")
+            for cd in (cands or []):
+                if not isinstance(cd, dict):
+                    continue
+                if sel and cd.get("candidate_id") != sel:
+                    continue
+                return str(cd.get("video_path") or "")
+            return ""
+        except Exception:
+            return ""
+
     def _chain_config_for(self, shots: List[Dict[str, Any]], index: int) -> Dict[str, Any]:
         """算第 index 个镜头的转镜强约束（prev_shot_id / transition / must_match）。
 
@@ -199,13 +341,21 @@ params 按 action 给:
             return {}
         try:
             from core.continuity import chain_plan
-            plan = chain_plan(shots[: index + 1])
+            # ★ v1.4.3: 必须传 selected_video_of —— chain_plan 只有拿到
+            #   "上一镜选中的视频路径" 才会给出 use_last_frame_of。
+            #   不传的话永远返回 None，尾帧接力（衔接丝滑的硬环节）就是死的。
+            plan = chain_plan(shots[: index + 1],
+                             selected_video_of=self._selected_video_of)
             for item in plan:
                 if item.get("shot_id") == shots[index].get("id"):
                     return {
                         "prev_shot_id": item.get("prev_shot_id"),
                         "transition_type": item.get("transition_type", "none"),
                         "must_match_first_frame_desc": item.get("must_match_first_frame_desc", ""),
+                        # ★ v1.4.3: 把"用上一镜的尾帧当本镜首帧"一起带过去。
+                        #   这是"衔接丝滑"最硬的一环 —— 只写提示词约束是软的，
+                        #   真正接住的是**首帧图直接接上一镜的尾帧**。
+                        "use_last_frame_of": item.get("use_last_frame_of"),
                     }
         except Exception:
             pass
@@ -247,7 +397,14 @@ params 按 action 给:
                 "project_id": project_id,
                 "user_prompt": user_prompt,
                 "style": params.get("style", "cinematic"),
-                "duration": params.get("duration", 30)
+                # ★ v1.4.3: 字段名对不上 —— agent 传 "duration"，
+                #   orchestrator 读的是 "total_duration" -> 静默用默认 30 秒。
+                #   用户要 10 秒，AI 实际按 30 秒写（每场 15 秒），
+                #   花钱也按 30 秒算。两个字段名都传，以后谁改都不会再错位。
+                "duration": int(params.get("duration") or 30),
+                "total_duration": int(params.get("duration") or 30),
+                # ★ v1.4.3: 用户明确说了几个镜头就传几个
+                "scene_count": params.get("scene_count") or params.get("shot_count"),
             }
             
             script_handle = self.orch.submit(
@@ -313,7 +470,10 @@ params 按 action 给:
                 
                 shot_payload = {
                     "shot_id": shot_id,
-                    "num_candidates": params.get("num_candidates", 4),
+                    # ★ v1.4.3: 默认候选数 4 -> 1。每个候选都单独计费，
+                #   默认 4 个等于一次任务花 4 倍钱（实测一次完整流程近百元）。
+                #   用户明确说"多出几个"时才提高。
+                "num_candidates": int(params.get("num_candidates") or 1),
                 }
                 # ★ v1.4.3: **不要**在这里写死默认 provider/model。
                 #   原来写死 "runway"/"gen3"，而 orchestrator 里是
@@ -436,9 +596,26 @@ params 按 action 给:
             yield ProgressEvent(stage="analyzing_script", progress=0.2)
             
             # 读取项目脚本
+            # ★ v1.4.3: 脚本**不在 projects 表**（只有 id/title/description/status/settings），
+            #   在 scripts 表里。原来的 project.get("script") 永远拿不到，
+            #   一律报"项目脚本为空"。
             db = self._db()
-            project = db.get_project(project_id) if db else None
-            script_text = (project or {}).get("script") if isinstance(project, dict) else getattr(project, "script", None)
+            script_text = ""
+            if db is not None:
+                try:
+                    _sc = db.get_script(project_id) or {}
+                    if isinstance(_sc, dict):
+                        _sj = _sc.get("scenes") or []
+                        script_text = chr(10).join(
+                            f"第{s.get('scene_number', i+1)}场 {s.get('title','')}"
+                            f"（{s.get('location','')}，{s.get('duration_seconds','')}秒）"
+                            f"{chr(10)}{str(s.get('actions',''))} {str(s.get('dialogues',''))}"
+                            for i, s in enumerate(_sj) if isinstance(s, dict)
+                        )
+                        if not script_text:
+                            script_text = str(_sc.get("outline") or "")
+                except Exception as _se:
+                    logging.warning("读取剧本失败: %s", _se)
             if not script_text:
                 yield TextEvent(content="项目脚本为空，无法生成角色建议")
                 yield DoneEvent()
@@ -453,7 +630,7 @@ params 按 action 给:
 - 在故事中的作用
 
 脚本:
-{project.script[:2000]}
+{script_text[:2000]}
 """
             
             response = await self.llm.chat(
@@ -461,7 +638,11 @@ params 按 action 给:
                 temperature=0.7
             )
             
-            suggestions = response.get("content", "未生成建议")
+            # ★ v1.4.3: LLMClient.chat 返回的是**字符串**，不是 dict。
+            #   原来 response.get("content") -> AttributeError -> 整个流程进 except。
+            suggestions = response if isinstance(response, str) else str(response or "")
+            if not suggestions.strip():
+                suggestions = "未生成建议"
             yield TextEvent(content=f"角色建议:\n{suggestions}")
             
             # 创建 ActionRequired 事件
@@ -479,18 +660,38 @@ params 按 action 给:
                 ]
             )
             
-            # 等待用户响应
-            await event.wait()
+            # 等待用户响应（★ v1.4.3 加超时：原来无限等，
+            #   用户不点按钮这条 SSE 连接会一直挂着，连接池被占满）
+            try:
+                await asyncio.wait_for(event.wait(), timeout=900)
+            except asyncio.TimeoutError:
+                yield TextEvent(content="等待确认超时（15 分钟），已跳过这一步")
+                self._pending_actions.pop(action_id, None)
+                self._action_responses.pop(action_id, None)
+                yield DoneEvent()
+                return
             
             user_choice = self._action_responses.get(action_id, {}).get("choice")
             if user_choice == "approve":
-                yield TextEvent(content="已确认角色设定")
-                # 保存到 DB
-                db.execute(
-                    "UPDATE projects SET characters = :chars WHERE id = :pid",
-                    {"chars": suggestions, "pid": project_id}
+                # ★ v1.4.3: 原来写的是 db.execute("UPDATE projects SET characters=...")
+                #   —— projects 表**没有 characters 列**，而且 Database 没有公开 execute
+                #   方法 -> 必然抛异常。现在改成真正建角色（db.create_character）。
+                _made = 0
+                try:
+                    for _c in _parse_character_suggestions(suggestions):
+                        db.create_character(
+                            project_id=project_id,
+                            name=_c.get("name", "未命名角色"),
+                            description=_c.get("description", ""),
+                        )
+                        _made += 1
+                except Exception as _ce:
+                    logging.warning("保存角色建议失败: %s", _ce)
+                yield TextEvent(
+                    content=(f"已确认角色设定"
+                            + (f"，已创建 {_made} 个角色到「角色」页" if _made else "")
+                            + "（后续可以补参考图并标记为「基准角色」）")
                 )
-                db.commit()
             elif user_choice == "edit":
                 yield TextEvent(content="请在编辑器中修改角色设定")
             else:

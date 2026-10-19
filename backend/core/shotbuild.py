@@ -211,7 +211,13 @@ def build_shots_from_script(db, pid: str, replace: bool = True) -> Dict[str, Any
         _prov = _cond.get("model_provider") or default_provider
         _model = _cond.get("model_name") or default_model or ""
         _ar = _cond.get("aspect_ratio") or ps.get("default_aspect_ratio") or "16:9"
-        _res = _cond.get("resolution") or "1080p"
+        # ★ v1.4.4: 分辨率可由设置指定（default_video_resolution）。
+        #   原来硬编码 1080p —— 用户想省钱（480p）时完全没法控制，
+        #   而且估价按 1080p 算会让预算闸误拦。
+        _res = (_cond.get("resolution")
+                or (settings.get("default_video_resolution") or "").lower()
+                or ps.get("default_resolution")
+                or "1080p")
         shot = db.create_shot(
             project_id=pid,
             order_index=i,

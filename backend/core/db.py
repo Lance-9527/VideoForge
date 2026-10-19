@@ -195,6 +195,12 @@ class Database:
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
+        # • v1.4.4: shots 表补 reference_features 列。
+        #   转镜衔接约束（chain）要存在这里——原来 v1.4.2 就想写它，
+        #   但这张表**从来没有这一列**，每次写都报
+        #   "no such column: reference_features"，
+        #   于是"转镜要接上得"的约束**一次都没落地**。
+        self._ensure_column("shots", "reference_features", "JSON")
         # 抽象化日志
         conn.execute("""
         CREATE TABLE IF NOT EXISTS abstraction_logs (

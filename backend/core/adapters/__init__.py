@@ -414,12 +414,25 @@ def register(cls: type) -> type:
 #     · 只有在设置里显式打开 allow_seedance=true 时才放行
 #     · 前端模型下拉框也不显示它们
 #   这样即使 agent / 拆镜 / 默认模型哪条路径漏改，也不会再误扣费。
+# ★★ v1.4.4 付费 provider 熔断（按用户指令重排）★★
+#   · "seedance"（火山方舟**直连**，ark- key）—— **永久禁用**。
+#     用户 2026-10-20 明确："我之前提供的 seedance 直连的 api 就不要再用了！"
+#     它不受 allow_seedance 开关影响，任何情况下都拒绝。
+#   · "seedance_t6"（token6688 网关 agentai.token6688.com）——
+#     走网关的 seedance 2.0（最便宜通道约 0.42 元/秒），
+#     用户授权后可用，但要 allow_seedance=true + 总闸都开。
+PERMANENTLY_BLOCKED_PROVIDERS = {"seedance"}
 PAID_BLOCKED_PROVIDERS = {"seedance", "seedance_t6"}
 
 
 def _paid_blocked_allowed(provider: str) -> bool:
     """付费 provider 的放行判定：默认全部拒绝，需显式开关。"""
     if provider not in PAID_BLOCKED_PROVIDERS:
+        return True
+    # 环境变量优先（运维级，任何环境下都能明确控制，不依赖 app state）
+    import os
+    if (os.environ.get("VIDEOFORGE_ALLOW_SEEDANCE", "").strip().lower()
+            in ("1", "true", "yes", "on")):
         return True
     try:
         from main import get_app_state
@@ -437,9 +450,15 @@ def get_adapter(provider: str, api_key: str = "", config: Dict[str, Any] = None)
     """根据 provider 名字获取适配器实例"""
     if provider not in ADAPTERS:
         raise ValueError(f"Unknown provider: {provider}. Available: {list(ADAPTERS.keys())}")
+    if provider in PERMANENTLY_BLOCKED_PROVIDERS:
+        raise ValueError(
+            f"provider「{provider}」（火山方舟直连）已按用户要求永久禁用。"
+            f"请改用 token6688 网关的 seedance_t6（seedance-2-0-official）、"
+            f"或可灵 kling_mcp 等其它 provider。"
+        )
     if provider in PAID_BLOCKED_PROVIDERS and not _paid_blocked_allowed(provider):
         raise ValueError(
-            f"provider「{provider}」已按用户要求禁用（Seedance 会产生高额费用）。"
+            f"provider「{provider}」已按用户要求禁用（付费 provider 默认关）。"
             f"请改用可灵（kling_mcp / kling）等其它 provider；"
             f"如确需临时启用，可在设置里把 allow_seedance 设为 true。"
         )

@@ -517,8 +517,12 @@ def extract_result(res: Any) -> Dict[str, Any]:
                     if nw and nw not in nowm:
                         nowm.append(nw)
                 if not cover:
+                    # ★ v1.4.3: 可灵 v3 只给 coverUrlWithoutWatermark，
+                    #   原来只认 coverUrl/cover_url -> 封面永远是空
                     cover = (w.get("coverUrl") or w.get("cover_url")
-                             or w.get("cover") or "")
+                             or w.get("cover")
+                             or w.get("coverUrlWithoutWatermark")
+                             or w.get("cover_url_without_watermark") or "")
                 # 作品级的状态与消息就是失败原因所在
                 m = w.get("message") or w.get("error") or w.get("error_message")
                 ws = w.get("status") or ""

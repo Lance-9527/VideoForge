@@ -148,11 +148,12 @@ class KlingMcpAdapter(VideoAdapter):
                 error=f"可灵 MCP 生成失败：{e}",
             )
 
-        # ★ extract_result 返回的是 **dict**（status/url/cover/error…），不是 tuple
-        info = T.extract_result(final) or {}
-        # ★ extract_result 的真实结构：{"status","done","failed","urls":[] ,
-        #   "urls_no_watermark":[],"cover","messages":[],"raw","error"}
-        #   视频地址在 **urls 列表**里（没有单数 url 字段）。
+        # ★ wait_task 返回的**已经是**整理好的结构
+        #   {"status","done","failed","urls":[],"urls_no_watermark":[],"cover","messages":[]}
+        #   之前这里又套了一层 T.extract_result(final) —— 把整理好的结构当原始响应
+        #   再解析一次，urls 被解析成空 -> 明明出了片却报"没有返回视频地址"。
+        info = final or {}
+        # 可灵 v3 只给 urlWithoutWatermark（urls 为空），两个都要取
         _urls = list(info.get("urls") or []) or list(info.get("urls_no_watermark") or [])
         url = _urls[0] if _urls else ""
         if not url:
@@ -176,6 +177,7 @@ class KlingMcpAdapter(VideoAdapter):
         except Exception as e:
             return VideoGenResult(success=False, provider=self.name,
                                   task_id=task_id, error=str(e))
+        # query_task 返回的是**原始响应**，这里才需要 extract_result
         d = T.extract_result(info) or {}
         _us = list(d.get("urls") or []) or list(d.get("urls_no_watermark") or [])
         url = _us[0] if _us else ""

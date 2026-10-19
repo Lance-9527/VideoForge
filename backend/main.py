@@ -104,7 +104,9 @@ def get_agent() -> ConversationAgent:
         from main import get_app_state
         state = get_app_state()
         llm = LLMClient(settings=state["db"].get_all_settings())
-        _agent_singleton = ConversationAgent(llm=llm, orch=None)
+        # orch 是 TaskQueue 实例 (用于 submit() 触发 orchestrator 任务)
+        orch = state.get("queue")
+        _agent_singleton = ConversationAgent(llm=llm, orchestrator=orch)
     return _agent_singleton
 
 

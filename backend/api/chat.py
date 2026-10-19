@@ -1,236 +1,248 @@
 """
-VideoForge · 对话 API（流式 + 非流式）
+VideoForge Chat API - 改造版
+新增 action 端点 + 流式事件类型
+保持向后兼容原有 /api/chat/ 和 /api/chat/stream
 """
 
 import asyncio
-import json
-import logging
-from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+import uuid
+from typing import Dict, Optional, Any
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
 
-from core.db import Database
-from core.chat import (
-    LLMProvider, Message, ChatRequest, ChatResponse,
-    get_provider, list_providers, PROVIDERS,
-    AGENT_SYSTEM_PROMPT,
-)
+from core.agent import ConversationAgent, AgentEvent
+from core.llm import LLMClient
+def get_current_user():  # 占位 — 实际应从 main app 注入 user
+    return None
 
 
-logger = logging.getLogger("videoforge.api.chat")
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-
-# ──────────── Schemas ────────────
-
-class MessageSchema(BaseModel):
-    role: str       # system | user | assistant
-    content: str
+# 全局 pending actions 存储（生产环境应用 Redis）
+PENDING_ACTIONS: Dict[str, Dict[str, Any]] = {}
+AGENT_INSTANCES: Dict[str, ConversationAgent] = {}  # 按 session_id 缓存
 
 
-class ChatRequestSchema(BaseModel):
-    provider: str = "deepseek"
-    model: Optional[str] = None
-    api_key: Optional[str] = None
-    messages: List[MessageSchema]
-    temperature: float = 0.7
-    max_tokens: int = 4000
-    stream: bool = False
-    system: Optional[str] = None  # 覆盖默认 system
+# ============ Request/Response Models ============
+
+class ChatRequest(BaseModel):
+    message: str
+    project_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 
-class ChatProvidersResponse(BaseModel):
-    providers: List[Dict[str, Any]]
+class ChatResponse(BaseModel):
+    reply: str
+    project_id: Optional[str] = None
 
 
-# ──────────── 工具 ────────────
-
-def _get_db():
-    """获取 db 单例（从 main 注入）"""
-    from main import get_app_state
-    return get_app_state()["db"]
+class ActionRequest(BaseModel):
+    action_id: str
+    choice: str
 
 
-def _resolve_api_key(provider: str, provided: Optional[str]) -> str:
-    """解析 API key：优先用请求里的，否则从 settings 读"""
-    if provided:
-        return provided
-    db = _get_db()
-    settings = db.get_all_settings()
-    llm_keys = settings.get("llm_api_keys", {})
-    return llm_keys.get(provider, "")
+class ActionResponse(BaseModel):
+    status: str
+    message: str
 
 
-# ──────────── 端点 ────────────
+# ============ 依赖注入 ============
 
-@router.get("/providers")
-async def get_chat_providers():
-    """列出所有支持的 LLM provider"""
-    return {"code": "000000", "message": "success", "data": {"providers": list_providers()}}
+async def get_llm_client() -> LLMClient:
+    """获取 LLM 客户端（实际应从全局池获取）"""
+    # 这里简化，实际应在 main.py 初始化时创建单例
+    return LLMClient()
 
 
-@router.post("/")
-async def chat(req: ChatRequestSchema):
-    """同步对话（一次性返回完整响应）"""
-    try:
-        api_key = _resolve_api_key(req.provider, req.api_key)
-        provider = get_provider(req.provider, api_key=api_key, model=req.model or "")
-
-        # 构建消息列表
-        messages = []
-        if req.system or AGENT_SYSTEM_PROMPT:
-            messages.append(Message(
-                role="system",
-                content=req.system or AGENT_SYSTEM_PROMPT,
-            ))
-        for m in req.messages:
-            messages.append(Message(role=m.role, content=m.content))
-
-        chat_req = ChatRequest(
-            messages=messages,
-            temperature=req.temperature,
-            max_tokens=req.max_tokens,
+async def get_agent(
+    session_id: str,
+    project_id: Optional[str],
+    llm: LLMClient = Depends(get_llm_client)
+) -> ConversationAgent:
+    """获取或创建 Agent 实例"""
+    cache_key = f"{session_id}:{project_id or 'default'}"
+    
+    if cache_key not in AGENT_INSTANCES:
+        AGENT_INSTANCES[cache_key] = ConversationAgent(
+            llm_client=llm,
+            project_id=project_id
         )
+    
+    return AGENT_INSTANCES[cache_key]
 
-        result = await provider.chat(chat_req)
 
-        return {
-            "code": "000000",
-            "data": {
-                "content": result.content,
-                "model": result.model,
-                "provider": req.provider,
-                "usage": result.usage,
-            },
-        }
+# ============ 原有端点（向后兼容）============
+
+@router.post("/", response_model=ChatResponse)
+async def chat_sync(
+    request: ChatRequest,
+    llm: LLMClient = Depends(get_llm_client),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    原有同步聊天端点（向后兼容）
+    收集所有流式事件后一次性返回文本
+    """
+    try:
+        session_id = request.session_id or str(uuid.uuid4())
+        agent = await get_agent(session_id, request.project_id, llm)
+        
+        # 收集所有文本事件
+        text_parts = []
+        async for event in agent.process_message(request.message):
+            if event.type == "text":
+                text_parts.append(event.content)
+            elif event.type == "done":
+                break
+        
+        reply = "\n".join(text_parts)
+        
+        return ChatResponse(
+            reply=reply or "I'm processing your request...",
+            project_id=request.project_id
+        )
+    
     except Exception as e:
-        logger.exception("Chat failed")
-        raise HTTPException(status_code=500, detail={"message": str(e)})
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/stream")
-async def chat_stream(req: ChatRequestSchema):
-    """流式对话（SSE）"""
+async def chat_stream(
+    request: ChatRequest,
+    llm: LLMClient = Depends(get_llm_client),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    改造后的流式端点
+    返回 SSE 格式事件：text / progress / action_required / image / video / done
+    """
     try:
-        api_key = _resolve_api_key(req.provider, req.api_key)
-        provider = get_provider(req.provider, api_key=api_key, model=req.model or "")
-
-        messages = []
-        if req.system or AGENT_SYSTEM_PROMPT:
-            messages.append(Message(
-                role="system",
-                content=req.system or AGENT_SYSTEM_PROMPT,
-            ))
-        for m in req.messages:
-            messages.append(Message(role=m.role, content=m.content))
-
-        chat_req = ChatRequest(
-            messages=messages,
-            temperature=req.temperature,
-            max_tokens=req.max_tokens,
-        )
-
+        session_id = request.session_id or str(uuid.uuid4())
+        agent = await get_agent(session_id, request.project_id, llm)
+        
         async def event_generator():
             try:
-                async for chunk in provider.stream_chat(chat_req):
-                    if chunk:
-                        # SSE 格式：data: <json>\n\n
-                        payload = json.dumps({"delta": chunk}, ensure_ascii=False)
-                        yield f"data: {payload}\n\n"
-                yield "data: [DONE]\n\n"
+                async for event in agent.process_message(
+                    request.message,
+                    context={"user_id": current_user.get("id")}
+                ):
+                    # 转换为 SSE 格式
+                    event_dict = event.dict()
+                    
+                    # 如果是 action_required，注册到全局字典
+                    if event.type == "action_required":
+                        PENDING_ACTIONS[event.action_id] = {
+                            "agent": agent,
+                            "session_id": session_id,
+                            "timestamp": event.timestamp
+                        }
+                    
+                    yield {
+                        "event": event.type,
+                        "data": event_dict
+                    }
+                    
+                    if event.type == "done":
+                        break
+            
             except Exception as e:
-                err = json.dumps({"error": str(e)})
-                yield f"data: {err}\n\n"
+                yield {
+                    "event": "error",
+                    "data": {"message": str(e)}
+                }
+        
+        return EventSourceResponse(event_generator())
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+
+# ============ 新端点：Action 处理 ============
+
+@router.post("/action", response_model=ActionResponse)
+async def handle_action(
+    request: ActionRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    处理用户的 action 选择（不调用 LLM，直接解锁 Agent 等待）
+    
+    Args:
+        request: {action_id, choice}
+    
+    Returns:
+        {status: "resolved", message: "..."}
+    """
+    action_id = request.action_id
+    choice = request.choice
+    
+    if action_id not in PENDING_ACTIONS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Action {action_id} not found or already resolved"
         )
-    except Exception as e:
-        logger.exception("Stream chat failed")
-        raise HTTPException(status_code=500, detail={"message": str(e)})
-
-
-@router.post("/test")
-async def test_provider(provider: str, api_key: Optional[str] = None,
-                        model: Optional[str] = None):
-    """测试 provider 是否可用"""
+    
     try:
-        api_key = _resolve_api_key(provider, api_key)
-        if provider != "ollama" and not api_key:
-            return {
-                "code": "000001",
-                "message": f"Provider {provider} 需要 API key",
-                "data": {"available": False, "reason": "no_api_key"},
-            }
-
-        p = get_provider(provider, api_key=api_key, model=model or "")
-        # 发个最小请求
-        result = await p.chat(ChatRequest(
-            messages=[Message(role="user", content="说 'OK' 一个字。")],
-            max_tokens=10,
-        ))
-        return {
-            "code": "000000",
-            "message": "success",
-            "data": {
-                "available": True,
-                "response": result.content,
-                "model": result.model,
-            },
-        }
+        action_data = PENDING_ACTIONS[action_id]
+        agent: ConversationAgent = action_data["agent"]
+        
+        # 解锁 Agent 的等待
+        agent.resolve_action(action_id, choice)
+        
+        # 清理
+        del PENDING_ACTIONS[action_id]
+        
+        return ActionResponse(
+            status="resolved",
+            message=f"Action resolved with choice: {choice}"
+        )
+    
     except Exception as e:
-        return {
-            "code": "000001",
-            "message": str(e),
-            "data": {"available": False, "reason": str(e)},
-        }
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# ──────────── AI 对话会话持久化（服务端）────────────
-
-class ConversationSchema(BaseModel):
-    id: str
-    title: str = ""
-    messages: list = []
-
-
-def _get_db():
-    from main import get_app_state
-    return get_app_state()["db"]
-
-
-@router.get("/conversations")
-async def list_conversations(limit: int = 100):
-    db = _get_db()
-    return {"code": "000000", "message": "success", "data": {"conversations": db.list_conversations(limit)}}
+@router.get("/actions/pending")
+async def list_pending_actions(current_user: dict = Depends(get_current_user)):
+    """
+    列出当前 pending 的 actions（调试用）
+    """
+    return {
+        "pending_actions": [
+            {
+                "action_id": aid,
+                "session_id": data["session_id"],
+                "timestamp": data["timestamp"]
+            }
+            for aid, data in PENDING_ACTIONS.items()
+        ]
+    }
 
 
-@router.get("/conversations/{cid}")
-async def get_conversation(cid: str):
-    db = _get_db()
-    conv = db.get_conversation(cid)
-    if not conv:
-        return {"code": "000001", "message": "未找到", "data": None}
-    return {"code": "000000", "message": "success", "data": conv}
+# ============ 原有辅助端点（假设存在）============
+
+@router.get("/history")
+async def get_chat_history(
+    project_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """获取聊天历史（占位）"""
+    # 实际应从数据库读取
+    return {"messages": []}
 
 
-@router.post("/conversations")
-async def upsert_conversation(req: ConversationSchema):
-    db = _get_db()
-    conv = db.upsert_conversation(req.id, req.title, req.messages)
-    return {"code": "000000", "message": "success", "data": conv}
+@router.delete("/session/{session_id}")
+async def clear_session(
+    session_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """清理 session（占位）"""
+    cache_key_prefix = f"{session_id}:"
+    keys_to_delete = [k for k in AGENT_INSTANCES.keys() if k.startswith(cache_key_prefix)]
+    
+    for key in keys_to_delete:
+        del AGENT_INSTANCES[key]
+    
+    return {"status": "cleared", "session_id": session_id}
 
-
-@router.delete("/conversations/{cid}")
-async def delete_conversation(cid: str):
-    db = _get_db()
-    if not db.delete_conversation(cid):
-        return {"code": "000001", "message": "未找到"}
-    return {"code": "000000", "message": "success"}

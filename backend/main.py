@@ -92,6 +92,21 @@ from core.postprocess import (
     generate_srt_from_timeline,
 )
 from api.chat import router as chat_router
+from core.agent import ConversationAgent
+from core.llm import LLMClient
+
+_agent_singleton = None
+
+def get_agent() -> ConversationAgent:
+    """懒加载 agent 单例 (延迟到第一次调用以避开启动阻塞)"""
+    global _agent_singleton
+    if _agent_singleton is None:
+        from main import get_app_state
+        state = get_app_state()
+        llm = LLMClient(settings=state["db"].get_all_settings())
+        _agent_singleton = ConversationAgent(llm=llm, orch=None)
+    return _agent_singleton
+
 
 
 # ──────────── 应用状态（全局单例）────────────

@@ -106,9 +106,14 @@ def check_budget(
     est = float(estimated_yuan or 0)
 
     if limit <= 0:
-        # 不限预算
-        return {"ok": True, "spent": spent, "limit": 0.0, "estimate": est,
-                "remaining": -1.0, "message": ""}
+        # ★ v1.4.5: 预算为 0（没配 / 配成 0）时**拒绝**，不是"不限"。
+        #   原来这里 return ok=True —— 于是"没配预算"= "预算闸完全失效"，
+        #   正好和"默认禁止花钱"相反。
+        #   用户既有规则就是「budget=0 即拒」。
+        raise BudgetExceeded(
+            f"项目预算未设置或为 0（当前上限 {limit:.2f} 元），已阻止生成。"
+            f"请在「设置」里把 default_video_budget_yuan 设成大于 0 的值。"
+        )
 
     remaining = round(limit - spent, 2)
     if est > remaining:

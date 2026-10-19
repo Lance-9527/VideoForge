@@ -100,6 +100,13 @@ async def get_agent(
     """
     cache_key = f"{session_id}:{project_id or 'default'}"
 
+    # ★ v1.4.5: AGENT_INSTANCES 原来**只增不减** —— 每个新 session_id
+    #   就在全局字典里留下一个 agent，永远不清理（内存泄漏）。
+    #   现在超过上限就淘汰最老的一批。
+    if len(AGENT_INSTANCES) > 64:
+        for _old in list(AGENT_INSTANCES.keys())[:32]:
+            AGENT_INSTANCES.pop(_old, None)
+
     if cache_key not in AGENT_INSTANCES:
         orch = None
         try:

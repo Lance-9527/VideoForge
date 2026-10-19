@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from typing import AsyncGenerator, Dict, Any, List, Optional, Callable
 from datetime import datetime
@@ -407,6 +408,11 @@ params 按 action 给:
                 "scene_count": params.get("scene_count") or params.get("shot_count"),
             }
             
+            if self.orch is None:
+                yield TextEvent(content="任务队列不可用（后端未初始化），无法执行生成流程")
+                yield DoneEvent()
+                return
+
             script_handle = self.orch.submit(
                 task_id=f"script_{uuid.uuid4().hex[:8]}",
                 task_type="generate_script",
@@ -414,7 +420,14 @@ params 按 action 给:
             )
             
             # 等待脚本生成完成
+            # ★ v1.4.5: 等待加超时。原来无限等 —— worker 卡住时
+            #   这条 SSE 连接会一直挂着占着连接池。
+            _deadline = time.monotonic() + 1800
             while script_handle.status not in [TaskState.SUCCESS.value, TaskState.FAILED.value]:
+                if time.monotonic() > _deadline:
+                    yield TextEvent(content="脚本生成超时（30 分钟），已中止")
+                    yield DoneEvent()
+                    return
                 await asyncio.sleep(0.5)
             
             if script_handle.status == TaskState.FAILED.value:
@@ -506,7 +519,11 @@ params 按 action 给:
                 shot_handle.add_progress_callback(on_progress)
                 
                 # 等待镜头生成完成
+                _sdl = time.monotonic() + 1800
                 while shot_handle.status not in [TaskState.SUCCESS.value, TaskState.FAILED.value]:
+                    if time.monotonic() > _sdl:
+                        yield TextEvent(content=f"镜头 {i+1} 生成超时（30 分钟），已中止")
+                        break
                     await asyncio.sleep(0.5)
                     # 推送最新进度
                     if progress_events:
@@ -555,22 +572,36 @@ params 按 action 给:
                         )
                     )
             
-            # Step 3: 组装时间线 (简化版，直接拼接)
+            # Step 3: 组装时间线
             if shot_urls:
                 yield ProgressEvent(stage="assembling_timeline", progress=0.95)
-                
-                # 这里调用 DB 更新，把生成的视频写回镜头
-                db = self._db()
-                for idx, url in enumerate(shot_urls):
-                    try:
-                        db.update_shot_video(shots[idx].get("id"), url, idx)
-                    except Exception as e:
-                        logging.warning("写回 shot 视频失败 %s: %s", shots[idx].get("id"), e)
-                
-                # 假设拼接后的最终 URL (实际应调用 ffmpeg 或云服务)
-                final_url = f"/api/projects/{project_id}/final_video.mp4"
-                yield VideoEvent(url=final_url)
-                yield TextEvent(content="视频生成完成！")
+
+                # ★ v1.4.5: 真正把成片**合成出来**。
+                #   原来这里只调了一个不存在的 db.update_shot_video（异常被 except 吞掉），
+                #   然后直接对外发一个 /final_video 链接 —— 那个文件是**上一次**成片留下的，
+                #   用户点开看到的是旧片。现在真的调 compose_project 生成 final.mp4。
+                _final = ""
+                try:
+                    from core.compose import compose_project
+                    _db = self._db()
+                    if _db is not None:
+                        _res = await compose_project(
+                            project_id, db=_db,
+                            settings=_db.get_all_settings(),
+                            voice_id="", with_voice=False, burn_subtitles=False,
+                            scene_card=False, output_name="final.mp4",
+                        )
+                        _final = str(getattr(_res, "output_path", "") or "")
+                except Exception as _ce:
+                    logging.warning("成片合成失败（单镜视频仍可在对话里看）: %s", _ce)
+
+                if _final:
+                    yield VideoEvent(url=f"/api/projects/{project_id}/final_video.mp4")
+                    yield TextEvent(content="视频生成完成！")
+                else:
+                    yield TextEvent(content=(
+                        "各镜头视频已生成（见上方），但成片合成未完成 —— "
+                        "可到「成片」页手动合成，或点单镜重抽。"))
             
             yield DoneEvent()
         

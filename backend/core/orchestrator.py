@@ -305,6 +305,20 @@ async def generate_shot_handler(payload: Dict[str, Any],
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for i in range(num_candidates):
+        # ★ v1.4.5: 每个候选**之前**重新查一次预算。
+        #   原来只在循环外查一次 —— 多候选时第 2 个开始就可能超预算，
+        #   但闸门不会响。
+        try:
+            _budget.check_budget(
+                shot.get("project_id") or "",
+                _pricing.estimate_cost_yuan(
+                    provider, duration_seconds=int(_dur or 5),
+                    resolution=_res, num_candidates=1),
+                db=db, provider=provider,
+            )
+        except _budget.BudgetExceeded as _be2:
+            errors.append(f"候选{i+1}: 预算不足（{_be2}）")
+            break
         try:
             result: VideoGenResult = await adapter.generate(req)
             if not result.success:

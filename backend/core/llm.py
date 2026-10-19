@@ -52,7 +52,7 @@ from .dialogue import (
 PROVIDER_ENDPOINTS: Dict[str, Dict[str, str]] = {
     "deepseek":  {"base_url": "https://api.deepseek.com",                       "path": "/v1/chat/completions", "default_model": "deepseek-chat"},
     "openai":    {"base_url": "https://api.openai.com",                         "path": "/v1/chat/completions", "default_model": "gpt-4o"},
-    "minimax":   {"base_url": "https://api.minimaxi.com",                       "path": "/v1/chat/completions", "default_model": "MiniMax-Text-01"},
+    "minimax":   {"base_url": "https://api.minimaxi.com",                       "path": "/v1/chat/completions", "default_model": "MiniMax-M3.1-Flash"},
     "qwen":      {"base_url": "https://dashscope.aliyuncs.com/compatible-mode", "path": "/v1/chat/completions", "default_model": "qwen-plus"},
     "dashscope": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode", "path": "/v1/chat/completions", "default_model": "qwen-plus"},
     "glm":       {"base_url": "https://open.bigmodel.cn/api/paas/v4",           "path": "/chat/completions",    "default_model": "glm-4-plus"},

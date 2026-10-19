@@ -399,10 +399,17 @@ LLM_CATALOG: Dict[str, Dict[str, Any]] = {
             #   language model for agentic reasoning, tool use, coding,
             #   multimodal chat input, and long-context tasks"，1M 上下文），
             #   所以它出现在**这里**（剧本/分镜/提示词），而不是「配音模型」。
-            {"id": "MiniMax-M3", "label": "MiniMax-M3 · 最新旗舰（1M 上下文）",
-             "tags": ["最新", "长文本", "多模态"],
-             "best_for": "长剧本、复杂分场（1M 上下文，能一次读完整个剧本）",
-             "verified": False},
+            {"id": "MiniMax-M3.1-Flash", "label": "MiniMax-M3.1-Flash · 最快（实测推荐）",
+             "tags": ["最新", "长文本", "快", "结构化输出"],
+             "best_for": "★ 实测 2026-10-19 最快档：12.3 万 token 长上下文仅 3.6 秒"
+                         "（M3 要 134 秒），JSON 输出干净不带 <think>，"
+                         "指令遵循严格。长视频 metadata 总结 / 意图提取首选",
+             "verified": True},
+            {"id": "MiniMax-M3", "label": "MiniMax-M3 · 旗舰（深度推理）",
+             "tags": ["长文本", "多模态", "深度推理"],
+             "best_for": "需要更多思考步的复杂推理（reasoning_tokens 约为 M3.1 的 2.5 倍）；"
+                         "★ 注意：它的 <think> 会混在 content 里，JSON 解析需先剥离",
+             "verified": True},
             {"id": "MiniMax-Text-01", "label": "MiniMax-Text-01 · 长文本强", "tags": ["长文本"],
              "best_for": "剧本大纲、分场（上下文长）", "verified": True},
             {"id": "MiniMax-M1", "label": "MiniMax-M1 · 推理强", "tags": ["推理"],

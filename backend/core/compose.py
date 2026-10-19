@@ -1312,7 +1312,12 @@ async def compose_project(
                 if isinstance(_rf, str):
                     _rf = json.loads(_rf or "{}")
                 _rf = dict(_rf or {})
-                if not (_rf.get("voice_id") or _rf.get("voice")):
+                # ★ v1.4.3: _v 原来根本没定义（pyflakes 报 undefined name），
+                #   一进"选角落库"分支就 NameError。目标音色 = 该角色在 cast_plan
+                #   里分到的嗓子；collision 记录里带的是 voice/characters。
+                _names = _c.get("characters") or []
+                _v = _c.get("voice") or (cast_map.get(_names[0]) if _names else None)
+                if not (_rf.get("voice_id") or _rf.get("voice")) and _v:
                     _rf["voice_id"] = _v
                     _rf["voice_source"] = "videoforge_cast_plan"
                     db.update_character(_c["id"], reference_features=_rf)

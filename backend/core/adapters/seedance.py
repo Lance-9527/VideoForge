@@ -16,6 +16,9 @@ class SeedanceAdapter(VideoAdapter):
     name = "seedance"
     display_name = "豆包 Seedance（字节火山）"
     description = "APPSO 推荐，单段最长 30s，支持首尾帧"
+    # ★★ v1.4.3: 按用户要求**禁用**（Seedance 费用高，用户明确不用了）。
+    #    get_adapter 也会硬拦，只有设置里 allow_seedance=true 才放行。
+    usable_for_video = False
     supported_aspect_ratios = ["16:9", "9:16", "1:1", "21:9", "4:3", "3:4"]
     supported_resolutions = ["480p", "720p", "1080p"]
     # ★ 官方：Seedance 2.0 / 2.0-fast 的 `duration` 范围是 **[4,15]**（或 -1 表示按

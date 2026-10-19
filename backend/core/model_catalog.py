@@ -221,6 +221,18 @@ VIDEO_CATALOG: Dict[str, Dict[str, Any]] = {
         ],
     },
 
+    "kling_mcp": {
+        "display": "可灵 Kling 3.0（官方 MCP）",
+        "note": "走 klingai.com 官方 MCP（用户已授权，不消耗设置里的 API Key）。支持图生视频与角色 Element 一致性。",
+        "models": [
+            {"id": "kling-video-v3_0", "label": "可灵 3.0 · MCP", "tags": ["文生视频", "图生视频", "角色一致"],
+             "caps": {"480P": [5, 10], "720P": [5, 10], "1080P": [5, 10]},
+             "best_for": "默认：角色一致性最好（走 image_to_video + Element）", "verified": True},
+            {"id": "kling-video-v3_0_omni", "label": "可灵 3.0 Omni · 多模态参考", "tags": ["多模态参考"],
+             "caps": {"720P": [5, 10], "1080P": [5, 10]},
+             "best_for": "多个参考图混用", "verified": False},
+        ],
+    },
     "kling": {
         "display": "可灵 Kling（快手）",
         "note": "国内画面质量口碑最好之一；标准版/专业版价格差较大",

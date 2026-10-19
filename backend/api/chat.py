@@ -5,6 +5,8 @@ VideoForge Chat API - 改造版
 """
 
 import asyncio
+import logging
+import json
 import uuid
 from typing import Dict, Optional, Any
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -17,6 +19,8 @@ from core.llm import LLMClient
 def get_current_user():  # 占位 — 实际应从 main app 注入 user
     return None
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -51,9 +55,32 @@ class ActionResponse(BaseModel):
 # ============ 依赖注入 ============
 
 async def get_llm_client() -> LLMClient:
-    """获取 LLM 客户端（实际应从全局池获取）"""
-    # 这里简化，实际应在 main.py 初始化时创建单例
-    return LLMClient()
+    """获取 LLM 客户端。
+
+    ★ v1.4.3: 原来这里 `return LLMClient()` —— 没传 settings，
+      所以拿不到用户在设置里配的 minimax key，每次调用都会 401。
+      现在从全局 settings 读。
+    """
+    from main import get_app_state
+    state = get_app_state()
+    try:
+        s = state["db"].get_all_settings()
+        client = LLMClient(settings=s)
+        logger.info(
+            "chat LLM 客户端: provider=%s model=%s key=%s (db=%s)",
+            client.provider, client.model, "有" if client.api_key else "无",
+            getattr(state.get("db"), "db_path", "?"),
+        )
+        if not client.api_key:
+            logger.warning(
+                "chat LLM 没有 API key —— provider=%s model=%s。"
+                "请到「设置」里配置对应 provider 的 key。",
+                client.provider, client.model,
+            )
+        return client
+    except Exception:
+        logger.exception("构造 LLMClient 失败，回退默认（多半会 401）")
+        return LLMClient()
 
 
 async def get_agent(
@@ -61,15 +88,30 @@ async def get_agent(
     project_id: Optional[str],
     llm: LLMClient = Depends(get_llm_client)
 ) -> ConversationAgent:
-    """获取或创建 Agent 实例"""
+    """获取或创建 Agent 实例。
+
+    ★ v1.4.3 修两处（1.4.0 的 agent/chat 签名不匹配，实际调用直接 500）：
+      1. `ConversationAgent(llm_client=..., project_id=...)`
+         → agent 的真实签名是 `__init__(self, llm, orchestrator)`；
+         project_id 是 `stream_pipeline(intent, params, project_id)` 的参数，
+         不是构造函数参数。
+      2. **没传 orchestrator** —— agent 需要 TaskQueue 才能 submit 任务，
+         少了它整个生成流程根本走不动。
+    """
     cache_key = f"{session_id}:{project_id or 'default'}"
-    
+
     if cache_key not in AGENT_INSTANCES:
+        orch = None
+        try:
+            from main import get_app_state
+            orch = get_app_state().get("queue")
+        except Exception:
+            orch = None
         AGENT_INSTANCES[cache_key] = ConversationAgent(
-            llm_client=llm,
-            project_id=project_id
+            llm=llm,
+            orchestrator=orch,
         )
-    
+
     return AGENT_INSTANCES[cache_key]
 
 
@@ -124,36 +166,57 @@ async def chat_stream(
         
         async def event_generator():
             try:
-                async for event in agent.process_message(
-                    request.message,
-                    context={"user_id": current_user.get("id")}
+                # ★ v1.4.3: 先提意图，再跑对应 pipeline
+                #   （原来调 agent.process_message() —— agent 根本没这个方法）
+                intent = await agent.extract_intent(request.message)
+                action = str(intent.get("action") or "chat")
+                params = intent.get("params") or {}
+                if action == "chat":
+                    # 闲聊：直接回一句话，不进 pipeline
+                    reply = ""
+                    try:
+                        resp = await agent.llm.chat(
+                            [{"role": "user", "content": request.message}],
+                            max_tokens=800,
+                        )
+                        reply = resp or ""
+                    except Exception as e:
+                        reply = f"（对话失败：{e}）"
+                    yield f"data: {json.dumps({'type': 'text', 'content': reply}, ensure_ascii=False, default=str)}" + chr(10) * 2
+                    yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False, default=str)}" + chr(10) * 2
+                    return
+
+                async for event in agent.stream_pipeline(
+                    action, params, request.project_id or ""
                 ):
-                    # 转换为 SSE 格式
-                    event_dict = event.dict()
-                    
-                    # 如果是 action_required，注册到全局字典
+                    event_dict = event.model_dump()
+                    event_dict["type"] = event.type
+
+                    # action_required 注册到全局字典（点确认按钮时用）
                     if event.type == "action_required":
                         PENDING_ACTIONS[event.action_id] = {
                             "agent": agent,
                             "session_id": session_id,
-                            "timestamp": event.timestamp
+                            "timestamp": str(event.timestamp),
                         }
-                    
-                    yield {
-                        "event": event.type,
-                        "data": event_dict
-                    }
-                    
+
+                    # ★ StreamingResponse 必须 yield str/bytes —— 原来 yield dict
+                    #   直接 500（'dict' object has no attribute 'encode'）
+                    yield ("data: " + json.dumps(event_dict, ensure_ascii=False, default=str)
+                           + chr(10) + chr(10))
+
                     if event.type == "done":
                         break
-            
+
             except Exception as e:
-                yield {
-                    "event": "error",
-                    "data": {"message": str(e)}
-                }
+                import traceback
+                logger.exception("chat stream 失败")
+                err = {"type": "error", "message": str(e),
+                       "trace": traceback.format_exc()[-800:]}
+                yield ("data: " + json.dumps(err, ensure_ascii=False, default=str)
+                       + chr(10) + chr(10))
         
-        return EventSourceResponse(event_generator())
+        return StreamingResponse(event_generator())
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

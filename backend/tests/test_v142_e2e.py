@@ -245,11 +245,18 @@ def test_diff_and_unify_still_work(db: Database, project: str):
 # ════════════════════════════════════════════════════════════
 
 class _FakeHandle:
-    def __init__(self, state, data=None, error=None):
-        self.state = state
-        self.result = MagicMock()
-        self.result.data = data or {}
-        self.result.error = error
+    """模拟真实的 TaskHandle。
+
+    ★ v1.4.3: 真实 TaskHandle 的字段是 **status**（不是 state），
+      result 是**普通 dict**（不是带 .data/.error 的对象）。
+      这里按真实结构实现，避免测试通过但线上炸。
+    """
+
+    def __init__(self, status, data=None, error=None):
+        self.status = status
+        self.state = status          # 兼容旧断言
+        self.result = data or {}     # 真实是 dict
+        self.error = error
         self._callbacks = []
 
     def add_progress_callback(self, cb):
@@ -293,8 +300,25 @@ async def test_agent_generate_video_pipeline(db: Database, project: str, monkeyp
         {"id": "s2", "order_index": 1, "scene_id": "sc1",
          "description": "主角回头", "model_provider": "hailuo", "model_name": "MiniMax-Hailuo-03"},
     ]
+
+    # ★ v1.4.3: agent 的真实流程是
+    #   generate_script → core.shotbuild.build_shots_from_script() 拆镜 → 从 DB 读分镜
+    #   （generate_script 的返回值里**没有 shots**，只有 title/scenes_count）
+    #   这里 mock 掉拆镜，保持测试离线。
+    import core.shotbuild as _sb
+    monkeypatch.setattr(
+        _sb, "build_shots_from_script",
+        lambda db, pid, replace=True: {
+            "created": len(shots), "existing_before": 0, "removed": 0,
+            "shots": shots,
+            "linkage": {"scene_linked": 2, "char_linked": 2, "total": len(shots)},
+            "default_model": {"provider": "hailuo", "model": "MiniMax-Hailuo-03"},
+        },
+        raising=False,
+    )
+
     queue = _FakeTaskQueue({
-        "generate_script": {"shots": shots, "title": "村口"},
+        "generate_script": {"title": "村口", "scenes_count": 2, "three_layer_count": 2},
         "generate_shot": {"shot_id": "x", "video_url": "/media/x.mp4",
                           "preview_image": "/media/x.jpg", "status": "ok"},
     })

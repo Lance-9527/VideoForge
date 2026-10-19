@@ -96,7 +96,29 @@ class LLMClient:
     def __init__(self, provider: str = "deepseek",
                  api_key: str = "",
                  base_url: str = "",
-                 model: str = ""):
+                 model: str = "",
+                 settings: Optional[Dict[str, Any]] = None):
+        """构造 LLM 客户端。
+
+        ★ v1.4.3: 支持 `settings=` 传 db.get_all_settings() 的字典。
+          原来 main.py / chat.py 都在调 `LLMClient(settings=...)`，
+          但签名里没有这个参数 → TypeError → 被 except 吞掉 →
+          退回裸 `LLMClient()`（deepseek + 无 key）→ 每次调用 401。
+          显式传的 provider/api_key/base_url/model 优先级更高。
+        """
+        if settings is not None:
+            s = settings or {}
+            provider = provider if provider != "deepseek" else (
+                s.get("llm_provider") or s.get("remote_llm_provider") or provider
+            )
+            model = model or s.get("llm_model") or s.get("remote_llm_model") or ""
+            keys = s.get("llm_api_keys") or {}
+            api_key = api_key or keys.get(provider) or s.get("remote_llm_key", "")
+            # ★ 只有 provider 真的是 ollama 时才用 ollama 的地址。
+            #   之前不管什么 provider 都塞 ollama_base_url（默认 localhost:11434），
+            #   结果 minimax 的请求全打到了本地 Ollama → ConnectError。
+            if (provider or "").lower() in ("ollama", "local"):
+                base_url = base_url or s.get("ollama_url") or s.get("ollama_base_url", "") or "http://localhost:11434"
         self.provider = provider
         self.api_key = api_key
         self.base_url = base_url
@@ -143,14 +165,18 @@ class LLMClient:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         return httpx.AsyncClient(
             base_url=base,
-            timeout=httpx.Timeout(connect=15.0, read=180.0, write=60.0, pool=10.0),
+            timeout=httpx.Timeout(connect=15.0, read=300.0, write=120.0, pool=10.0),
+            # ★ v1.4.3: read 超时 180s → 600s。
+            #   MiniMax-M3.1-Flash 写剧本时思考链很长（实测 reasoning 13K 字符），
+            #   180s 经常在答案写完前就断 → ReadTimeout，整个流程失败。
             headers=headers,
         )
 
     async def chat(self, messages: List[Dict[str, str]],
                    temperature: float = 0.7,
                    max_tokens: int = 4000,
-                   response_format: Optional[Dict] = None) -> str:
+                   response_format: Optional[Dict] = None,
+                   reasoning_effort: Optional[str] = None) -> str:
         """发送聊天请求，返回文本（所有 provider 走 OpenAI 兼容协议，Ollama 单独处理）"""
         canon = normalize_provider(self.provider)
         base, path, model = self.resolve_endpoint()
@@ -176,6 +202,20 @@ class LLMClient:
             }
             if response_format:
                 payload["response_format"] = response_format
+            # ★ v1.4.3: MiniMax 的思考链默认混在 content 里，会污染 JSON。
+            #   实测 MiniMax-M3.1-Flash 传 reasoning_split=true 后，
+            #   思考链进独立的 reasoning_content 字段，content 是干净 JSON。
+            if canon == "minimax":
+                payload["reasoning_split"] = True
+                # ★ v1.4.3 关键性能修正：MiniMax-M3.1-Flash 默认会思考
+                #   **很长**（实测 reasoning 13K 字符 / 45 秒），
+                #   结果 max_tokens 全被思考吃光、正文为空、整条链路超时。
+                #   实测 reasoning_effort 对照（同样写剧本）：
+                #     minimal 15.2s 思考2170  low 12.1s 思考542 ← 最优
+                #     medium 37.5s 思考9093  high 46.2s 思考11229
+                #   low 反而内容最全（角色 4 个）、最快、且不会截断。
+                #   只给 minimax 传 —— 其它 provider 不认这个参数。
+                payload["reasoning_effort"] = reasoning_effort or "low"
 
             r = await client.post(path, json=payload)
             if r.status_code >= 400:
@@ -195,7 +235,40 @@ class LLMClient:
                     f"LLM 调用失败 [{canon} {model}] HTTP {r.status_code}: {detail}"
                 )
             data = r.json()
-            content = data["choices"][0]["message"]["content"]
+            _choice = (data.get("choices") or [{}])[0]
+            msg = _choice.get("message") or {}
+            content = msg.get("content")
+            # ★ v1.4.3: 截断检测。MiniMax-M3.1-Flash 的思考链很长
+            #   （实测 reasoning 13K 字符），max_tokens 给小了会被思考链吃光，
+            #   content 返回空 —— 看起来像"模型不听话"，其实是**被截断**。
+            #   这里明确报出来，别让上层把空内容当"AI 输出格式异常"。
+            if (_choice.get("finish_reason") == "length"
+                    and not (content or "").strip()):
+                _reason_len = len(msg.get("reasoning_content") or "")
+                # ★ v1.4.3 自动放大重试：MiniMax-M3.1-Flash 的思考链很长
+                #   （实测 reasoning 10K–13K 字符），任何 max_tokens 给小了
+                #   都会被思考链吃光、正文为空。以前每处都要手动调大，
+                #   漏一处就整条链路断掉。现在在这里统一兜底：
+                #   截断 → 自动用 3 倍 max_tokens 重试一次。
+                if max_tokens < 60000:
+                    _bump = min(int(max_tokens * 3), 60000)
+                    logger.warning(
+                        "LLM 输出被 max_tokens(%s) 截断（思考链约 %s 字符），"
+                        "自动放大到 %s 重试", max_tokens, _reason_len, _bump)
+                    await client.aclose()
+                    return await self.chat(
+                        messages, temperature=temperature,
+                        max_tokens=_bump, response_format=response_format,
+                        reasoning_effort=reasoning_effort)
+                raise RuntimeError(
+                    f"LLM 输出被 max_tokens({max_tokens}) 截断"
+                    f"（思考链约 {_reason_len} 字符，正文为空）。"
+                    f"请调大 max_tokens 或换更省思考的模型。"
+                )
+            # ★ v1.4.3 兜底: 某些 provider 把正文放 reasoning_content，
+            #   或 content 为空但 reasoning_content 有内容。
+            if not content:
+                content = msg.get("reasoning_content") or msg.get("reasoning") or content
             return _normalize_text_response(content, canon)
         finally:
             await client.aclose()
@@ -654,7 +727,8 @@ class ScriptService:
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.8,
-            max_tokens=4000,
+            # ★ v1.4.3: 4000 会被 MiniMax-M3.1-Flash 的思考链吃光（正文为空）
+            max_tokens=10000,
         )
 
         # 解析 JSON（多级容错）；失败则用强化提示重试一次
@@ -678,7 +752,7 @@ class ScriptService:
                         "scene_number, title, location, duration_seconds, characters, actions, dialogues, mood）。"},
                 ],
                 temperature=0.4,
-                max_tokens=4000,
+                max_tokens=12000,
             )
             try:
                 result = extract_json(retry_text)
@@ -733,7 +807,8 @@ class ScriptService:
                 {"role": "user", "content": "\n".join(ctx_parts)},
             ],
             temperature=0.6,
-            max_tokens=3000,
+            # ★ v1.4.3: 3000 会被 M3.1 思考链吃光（三层提示词正文为空）
+            max_tokens=10000,
         )
 
         try:
@@ -835,7 +910,7 @@ def _salvage_prose(text: str, limit: int = 400) -> str:
                 {"role": "user", "content": "\n".join(ctx_parts)},
             ],
             temperature=0.7,
-            max_tokens=4000,
+            max_tokens=10000,
         )
 
         try:
@@ -886,7 +961,7 @@ class AbstractionService:
                 {"role": "user", "content": f"原始描述：\n{source_description}"},
             ],
             temperature=0.7,
-            max_tokens=4000,
+            max_tokens=10000,
         )
 
         try:

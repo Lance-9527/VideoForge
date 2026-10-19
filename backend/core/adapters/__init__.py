@@ -407,10 +407,42 @@ def register(cls: type) -> type:
     return cls
 
 
+# ★★ v1.4.3 付费 provider 熔断开关 ★★
+#   用户明确要求：**不要用 Seedance**（实测一次完整流程就扣了近百元，
+#   对用户没有任何价值）。所以：
+#     · seedance / seedance_t6 默认**不可用**（get_adapter 直接拒绝）
+#     · 只有在设置里显式打开 allow_seedance=true 时才放行
+#     · 前端模型下拉框也不显示它们
+#   这样即使 agent / 拆镜 / 默认模型哪条路径漏改，也不会再误扣费。
+PAID_BLOCKED_PROVIDERS = {"seedance", "seedance_t6"}
+
+
+def _paid_blocked_allowed(provider: str) -> bool:
+    """付费 provider 的放行判定：默认全部拒绝，需显式开关。"""
+    if provider not in PAID_BLOCKED_PROVIDERS:
+        return True
+    try:
+        from main import get_app_state
+        st = get_app_state()
+        db = st.get("db")
+        if db is None:
+            return False
+        flag = (db.get_all_settings() or {}).get("allow_seedance")
+        return str(flag).strip().lower() in ("1", "true", "yes", "on")
+    except Exception:
+        return False
+
+
 def get_adapter(provider: str, api_key: str = "", config: Dict[str, Any] = None) -> VideoAdapter:
     """根据 provider 名字获取适配器实例"""
     if provider not in ADAPTERS:
         raise ValueError(f"Unknown provider: {provider}. Available: {list(ADAPTERS.keys())}")
+    if provider in PAID_BLOCKED_PROVIDERS and not _paid_blocked_allowed(provider):
+        raise ValueError(
+            f"provider「{provider}」已按用户要求禁用（Seedance 会产生高额费用）。"
+            f"请改用可灵（kling_mcp / kling）等其它 provider；"
+            f"如确需临时启用，可在设置里把 allow_seedance 设为 true。"
+        )
     return ADAPTERS[provider](api_key=api_key, config=config)
 
 

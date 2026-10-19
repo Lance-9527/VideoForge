@@ -488,6 +488,9 @@ async def _step_subtitle(pid: str, params: dict, db, settings: dict, out_dir: st
         progress("subtitle", 0.5, f"烧录 {len(entries)} 条字幕…")
     w = 1280
     try:
+        # ★ v1.4.3: 这个函数里没 import _run（原代码 126/230/511/560 行 import，
+        #   唯独这里漏了），一烧字幕就 NameError。
+        from core.compose import _run, _ffmpeg
         rc, info = await _run([_ffmpeg(), "-hide_banner", "-i", src], timeout=60)
         import re as _re
         m = _re.search(r"Video:.*?,\s*(\d{2,5})x(\d{2,5})", info or "", _re.S)

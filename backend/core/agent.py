@@ -1,7 +1,9 @@
 # backend/core/agent.py
 import asyncio
+import json
+import logging
 import uuid
-from typing import AsyncGenerator, Dict, Any, Optional, Callable
+from typing import AsyncGenerator, Dict, Any, List, Optional, Callable
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -59,6 +61,81 @@ class ConversationAgent:
         self._pending_actions: Dict[str, asyncio.Event] = {}
         self._action_responses: Dict[str, Dict[str, Any]] = {}
 
+    # ──────────── 意图提取 ────────────
+
+    INTENT_SYSTEM_PROMPT = """你是 VideoForge 的意图路由器。把用户消息解析成结构化意图。
+
+只输出 JSON，不要任何其他文字。schema:
+{
+  "action": "generate_video | suggest_characters | review_consistency | refine_shot | chat",
+  "params": {...},
+  "reasoning": "一句话说明"
+}
+
+action 判定:
+- generate_video: 用户想做视频/短片/片子（"做个 30 秒赛博朋克短片"）
+- suggest_characters: 用户要角色建议/角色设计（"给我几个角色想法"）
+- review_consistency: 用户要检查一致性/质量（"检查一下我的项目"）
+- refine_shot: 用户要改某一镜（"第 3 镜再暗一点"）
+- chat: 闲聊或无法判定
+
+params 按 action 给:
+- generate_video: {"prompt": 原话, "duration": 秒数(int, 默认 30), "style": "cinematic"}
+- suggest_characters: {"style_preference": "用户描述的风格"}
+- review_consistency: {}
+- refine_shot: {"shot_id": 镜号(int), "changes": "用户说的修改"}
+- chat: {}
+
+例子:
+用户: "帮我做一个 30 秒的赛博朋克短片"
+-> {"action":"generate_video","params":{"prompt":"帮我做一个 30 秒的赛博朋克短片","duration":30,"style":"cinematic"},"reasoning":"用户要做视频"}
+
+用户: "给我几个武侠角色建议"
+-> {"action":"suggest_characters","params":{"style_preference":"武侠"},"reasoning":"用户要角色建议"}
+
+用户: "检查一下我的项目"
+-> {"action":"review_consistency","params":{},"reasoning":"用户要检查一致性"}
+"""
+
+    async def extract_intent(self, user_message: str) -> Dict[str, Any]:
+        """从用户消息提取结构化意图。
+
+        ★ v1.4.3 补上这个方法：原来 chat.py 调 agent.process_message()，
+          agent.py 根本没有这个方法 —— 整个 chat 链路第一次调用就 500。
+          现在 agent 自己负责"理解意图"，chat.py 只负责把事件流出去。
+
+        ★ 用 M3.1-Flash 测过：它输出的是**干净 JSON**（不带 <think>），
+          所以这里的解析是稳的；解析失败会 fallback 到 generate_video。
+        """
+        default = {
+            "action": "generate_video",
+            "params": {"prompt": user_message, "duration": 30, "style": "cinematic"},
+            "reasoning": "意图解析失败，按默认走生成流程",
+        }
+        try:
+            resp = await self.llm.chat(
+                [
+                    {"role": "system", "content": self.INTENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                # ★ v1.4.3: 500 会被 M3.1 思考链吃光 → 意图解析永远失败
+                max_tokens=4000,
+                temperature=0.1,
+            )
+            content = (resp or "").strip()
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.lower().startswith("json"):
+                    content = content[4:]
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict) or "action" not in parsed:
+                return default
+            parsed.setdefault("params", {})
+            return parsed
+        except Exception as e:
+            logging.warning("意图解析失败，回退默认: %s", e)
+            return default
+
     # ------------------------------------------------------------------------
     # Pipeline Router
     # ------------------------------------------------------------------------
@@ -89,6 +166,14 @@ class ConversationAgent:
     # 1. 生成视频 Pipeline
     # ------------------------------------------------------------------------
     # ──────────── v1.4.2 辅助 ────────────
+
+    def _db(self):
+        """拿全局 DB 实例（拿不到就返回 None，不抛）。"""
+        try:
+            from main import get_app_state
+            return get_app_state().get("db")
+        except Exception:
+            return None
 
     def _canonical_characters(self, project_id: str) -> List[Dict[str, Any]]:
         """取项目里用户主动给定为基准的角色。
@@ -172,21 +257,50 @@ class ConversationAgent:
             )
             
             # 等待脚本生成完成
-            while script_handle.state not in [TaskState.SUCCESS, TaskState.FAILED]:
+            while script_handle.status not in [TaskState.SUCCESS.value, TaskState.FAILED.value]:
                 await asyncio.sleep(0.5)
             
-            if script_handle.state == TaskState.FAILED:
-                yield TextEvent(content=f"脚本生成失败: {script_handle.result.error}")
+            if script_handle.status == TaskState.FAILED.value:
+                yield TextEvent(content=f"脚本生成失败: {script_handle.error}")
                 yield DoneEvent()
                 return
             
-            shots = script_handle.result.data.get("shots", [])
+            # ★ v1.4.3 关键修复：generate_script 的真实返回值是
+            #   {"title", "scenes_count", "three_layer_count"} —— **没有 shots**。
+            #   分镜是 generate_script 之后**另外建**的（剧本场次 → 分镜 + 角色/场景引用）。
+            #   原来这里直接 result.get("shots") 永远拿到空 → "未生成任何镜头"。
+            #   现在：调 core.shotbuild 把剧本拆成分镜，再从 DB 读真实分镜。
+            yield TextEvent(content="剧本已生成，正在拆分分镜...")
+            try:
+                from core.shotbuild import build_shots_from_script, ShotBuildError
+                db = self._db()
+                if db is None:
+                    yield TextEvent(content="拿不到数据库，无法拆分分镜")
+                    yield DoneEvent()
+                    return
+                build = build_shots_from_script(db, project_id, replace=True)
+                shots = build.get("shots") or []
+            except ShotBuildError as e:
+                yield TextEvent(content=f"拆分分镜失败: {e}")
+                yield DoneEvent()
+                return
+            except Exception as e:
+                logging.exception("拆分分镜异常")
+                yield TextEvent(content=f"拆分分镜失败: {e}")
+                yield DoneEvent()
+                return
+
             if not shots:
-                yield TextEvent(content="未生成任何镜头")
+                yield TextEvent(content="剧本里没有可用场次，无法拆分镜")
                 yield DoneEvent()
                 return
-            
-            yield TextEvent(content=f"已生成 {len(shots)} 个镜头，开始逐个渲染...")
+
+            _link = build.get("linkage") or {}
+            yield TextEvent(
+                content=(f"已拆出 {len(shots)} 个分镜"
+                         f"（关联场景 {_link.get('scene_linked', 0)} 个、"
+                         f"角色 {_link.get('char_linked', 0)} 个），开始逐个渲染...")
+            )
             
             # Step 2: 生成每个镜头的视频
             shot_urls = []
@@ -200,9 +314,18 @@ class ConversationAgent:
                 shot_payload = {
                     "shot_id": shot_id,
                     "num_candidates": params.get("num_candidates", 4),
-                    "model_provider": params.get("model_provider", "runway"),
-                    "model_name": params.get("model_name", "gen3")
                 }
+                # ★ v1.4.3: **不要**在这里写死默认 provider/model。
+                #   原来写死 "runway"/"gen3"，而 orchestrator 里是
+                #   `provider = override_provider or shot["model_provider"]` ——
+                #   agent 硬塞的 runway 直接覆盖了分镜自己的模型设置，
+                #   结果用户配了 kling key 却报"Runway API key 未配置"。
+                #   现在只在用户**明确指定**时才覆盖，否则用分镜自己的
+                #   （拆镜时已按项目一致性原则选定）。
+                if params.get("model_provider"):
+                    shot_payload["model_provider"] = params["model_provider"]
+                if params.get("model_name"):
+                    shot_payload["model_name"] = params["model_name"]
                 
                 # ★ v1.4.2: 转镜强约束注入 —— 这一镜要接上一镜的尾帧
                 _chain = self._chain_config_for(shots, i)
@@ -223,7 +346,7 @@ class ConversationAgent:
                 shot_handle.add_progress_callback(on_progress)
                 
                 # 等待镜头生成完成
-                while shot_handle.state not in [TaskState.SUCCESS, TaskState.FAILED]:
+                while shot_handle.status not in [TaskState.SUCCESS.value, TaskState.FAILED.value]:
                     await asyncio.sleep(0.5)
                     # 推送最新进度
                     if progress_events:
@@ -233,35 +356,56 @@ class ConversationAgent:
                             progress=latest.get("progress", 0.0)
                         )
                 
-                if shot_handle.state == TaskState.FAILED:
-                    yield TextEvent(content=f"镜头 {i+1} 生成失败: {shot_handle.result.error}")
+                if shot_handle.status == TaskState.FAILED.value:
+                    yield TextEvent(content=f"镜头 {i+1} 生成失败: {shot_handle.error}")
                     continue
                 
                 # 推送预览图和视频
-                preview_img = shot_handle.result.data.get("preview_image")
+                preview_img = shot_handle.result.get("preview_image")
                 if preview_img:
                     yield ImageEvent(
                         url=preview_img,
-                        caption=shot.get("description", f"镜头 {i+1}")
+                        caption=shot.get("description") or f"镜头 {i+1}"
                     )
                 
-                video_url = shot_handle.result.data.get("video_url")
+                video_url = shot_handle.result.get("video_url")
                 if video_url:
                     yield VideoEvent(url=video_url)
                     shot_urls.append(video_url)
+                else:
+                    # ★ v1.4.3: provider 失败（key 无效/配额不足/模型不存在）时，
+                    #   orchestrator 把错误**写进 shot 行**并不抛异常，
+                    #   所以 task 状态是"成功"但没有产物。
+                    #   原来这里静默跳过 → 用户在对话里只看到"完成"，
+                    #   完全不知道出了什么事。现在把真实原因说出来。
+                    _reason = ""
+                    try:
+                        _db = self._db()
+                        _sh = _db.get_shot(shot_id) if _db else None
+                        _reason = str((_sh or {}).get("error_message") or
+                                      (_sh or {}).get("error") or "")
+                    except Exception:
+                        _reason = ""
+                    _reason = _reason or shot_handle.error or "未知原因"
+                    yield TextEvent(
+                        content=(
+                            f"镜头 {i+1} 没有产出视频：{_reason}\n"
+                            f"（可在「设置」里检查该模型服务的 API Key 与配额，"
+                            f"或换用其他 provider）"
+                        )
+                    )
             
             # Step 3: 组装时间线 (简化版，直接拼接)
             if shot_urls:
                 yield ProgressEvent(stage="assembling_timeline", progress=0.95)
                 
-                # 这里调用 DB 更新，标记项目的镜头链
-                db = next(get_db())
+                # 这里调用 DB 更新，把生成的视频写回镜头
+                db = self._db()
                 for idx, url in enumerate(shot_urls):
-                    db.execute(
-                        "UPDATE shots SET video_url = :url, sequence = :seq WHERE project_id = :pid AND id = :sid",
-                        {"url": url, "seq": idx, "pid": project_id, "sid": shots[idx].get("id")}
-                    )
-                db.commit()
+                    try:
+                        db.update_shot_video(shots[idx].get("id"), url, idx)
+                    except Exception as e:
+                        logging.warning("写回 shot 视频失败 %s: %s", shots[idx].get("id"), e)
                 
                 # 假设拼接后的最终 URL (实际应调用 ffmpeg 或云服务)
                 final_url = f"/api/projects/{project_id}/final_video.mp4"
@@ -292,9 +436,10 @@ class ConversationAgent:
             yield ProgressEvent(stage="analyzing_script", progress=0.2)
             
             # 读取项目脚本
-            db = next(get_db())
-            project = db.query(Project).filter(Project.id == project_id).first()
-            if not project or not project.script:
+            db = self._db()
+            project = db.get_project(project_id) if db else None
+            script_text = (project or {}).get("script") if isinstance(project, dict) else getattr(project, "script", None)
+            if not script_text:
                 yield TextEvent(content="项目脚本为空，无法生成角色建议")
                 yield DoneEvent()
                 return
@@ -393,15 +538,15 @@ class ConversationAgent:
                 payload=script_payload
             )
             
-            while script_handle.state not in [TaskState.SUCCESS, TaskState.FAILED]:
+            while script_handle.status not in [TaskState.SUCCESS.value, TaskState.FAILED.value]:
                 await asyncio.sleep(0.3)
             
-            if script_handle.state == TaskState.FAILED:
+            if script_handle.status == TaskState.FAILED.value:
                 yield TextEvent(content="无法加载镜头列表")
                 yield DoneEvent()
                 return
             
-            shots = script_handle.result.data.get("shots", [])
+            shots = script_handle.result.get("shots", [])
             if len(shots) < 2:
                 yield TextEvent(content="镜头数量不足，无需检查一致性")
                 yield DoneEvent()
@@ -489,9 +634,12 @@ class ConversationAgent:
             refine_payload = {
                 "shot_id": shot_id,
                 "num_candidates": params.get("candidates", 4),
-                "model_provider": params.get("model_provider", "runway"),
-                "model_name": params.get("model_name", "gen3")
             }
+            # ★ v1.4.3: 同上，不写死 runway —— 重抽要沿用该分镜自己的模型
+            if params.get("model_provider"):
+                refine_payload["model_provider"] = params["model_provider"]
+            if params.get("model_name"):
+                refine_payload["model_name"] = params["model_name"]
             
             refine_handle = self.orch.submit(
                 task_id=f"refine_{shot_id}_{uuid.uuid4().hex[:8]}",
@@ -506,16 +654,16 @@ class ConversationAgent:
             refine_handle.add_progress_callback(on_progress)
             
             # 等待完成
-            while refine_handle.state not in [TaskState.SUCCESS, TaskState.FAILED]:
+            while refine_handle.status not in [TaskState.SUCCESS.value, TaskState.FAILED.value]:
                 await asyncio.sleep(0.5)
             
-            if refine_handle.state == TaskState.FAILED:
-                yield TextEvent(content=f"精修失败: {refine_handle.result.error}")
+            if refine_handle.status == TaskState.FAILED.value:
+                yield TextEvent(content=f"精修失败: {refine_handle.error}")
                 yield DoneEvent()
                 return
             
             # 返回结果
-            candidates = refine_handle.result.data.get("candidates", [])
+            candidates = refine_handle.result.get("candidates", [])
             for idx, candidate in enumerate(candidates):
                 preview = candidate.get("preview_image")
                 if preview:

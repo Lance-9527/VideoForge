@@ -115,6 +115,18 @@ class TaskHandle:
     # 标记是否用户已请求取消（worker 在下个 stage 切换时检查）
     cancel_requested: bool = False
 
+    def add_progress_callback(self, callback: Callable) -> None:
+        """注册进度回调。
+
+        ★ v1.4.3 补上：agent 一直按 `handle.add_progress_callback(cb)` 用，
+          但 TaskHandle 只有 progress_callbacks 这个裸 list，没有这个方法 →
+          一进镜头生成就 AttributeError。
+        """
+        if callback is None:
+            return
+        if callback not in self.progress_callbacks:
+            self.progress_callbacks.append(callback)
+
 
 # ──────────── TaskQueue ────────────
 
@@ -199,7 +211,10 @@ class TaskQueue:
                 self._mark_cancelled(handle)
             except Exception as e:
                 logger.exception("Task %s failed at stage %s", handle.task_id, current_stage)
-                handle.error = str(e)
+                # ★ v1.4.3: str(e) 对 httpx.ReadTimeout 之类是空字符串，
+                #   前端只能看到"脚本生成失败: "（什么都没有）→ 加上异常类型。
+                _msg = str(e).strip()
+                handle.error = f"{type(e).__name__}: {_msg}" if _msg else type(e).__name__
                 handle.status = TaskState.FAILED.value
                 handle.failed_stage = current_stage.value if isinstance(current_stage, TaskState) else str(current_stage)
                 self.db.update_task(

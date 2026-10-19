@@ -59,6 +59,9 @@ from . import (
 class SeedanceT6Adapter(VideoAdapter):
     name = "seedance_t6"
     display_name = "Seedance 2.0 (token6688 网关)"
+    # ★★ v1.4.3: 按用户要求**禁用**（Seedance 费用高，用户明确不用了）。
+    #    get_adapter 也会硬拦，只有设置里 allow_seedance=true 才放行。
+    usable_for_video = False
     description = (
         "Seedance 2.0 走 token6688 网关。按秒计费，最便宜通道约 0.42 元/秒。"
         "支持文生视频 / 图生视频 / 多参考图（≤9 张）/ 首尾帧 / 9:16 竖屏。"

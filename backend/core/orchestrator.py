@@ -12,6 +12,8 @@ VideoForge · 编排器
 """
 
 import asyncio
+import os
+import shutil
 import json
 import logging
 from datetime import datetime
@@ -29,6 +31,52 @@ logger = logging.getLogger("videoforge.orchestrator")
 
 
 # ──────────── 任务处理器 ────────────
+
+
+def _media_url(local_path: Optional[str]) -> Optional[str]:
+    """把本地绝对路径转成前端可访问的 /api/media URL。
+
+    ★ v1.4.3：WebView 里 file:// 常被禁用，视频必须走 HTTP 才能在对话框里播。
+    """
+    if not local_path:
+        return None
+    try:
+        p = os.path.abspath(str(local_path))
+        if not os.path.exists(p):
+            return None
+        from urllib.parse import quote
+        return "/api/media?path=" + quote(p, safe="")
+    except Exception:
+        return None
+
+
+def _make_preview_frame(local_path: Optional[str], db=None) -> Optional[str]:
+    """从视频抽第一帧当封面（用户要求图片和视频都在对话框里展示）。"""
+    if not local_path or not os.path.exists(str(local_path)):
+        return None
+    try:
+        import subprocess
+        ff = None
+        if db is not None:
+            try:
+                ff = (db.get_all_settings() or {}).get("ffmpeg_path")
+            except Exception:
+                ff = None
+        if not ff or not os.path.exists(ff):
+            ff = shutil.which("ffmpeg") or "ffmpeg"
+        out = str(local_path) + ".jpg"
+        subprocess.run(
+            [ff, "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(local_path), "-frames:v", "1", "-q:v", "3", out],
+            check=True, capture_output=True, timeout=60,
+        )
+        if not os.path.exists(out):
+            return None
+        from urllib.parse import quote
+        return "/api/local-image?path=" + quote(os.path.abspath(out), safe="")
+    except Exception as e:
+        logger.debug("抽封面失败（不影响视频展示）: %s", e)
+        return None
 
 @register_task("generate_shot")
 async def generate_shot_handler(payload: Dict[str, Any],
@@ -123,11 +171,65 @@ async def generate_shot_handler(payload: Dict[str, Any],
     if _chain_notes:
         full_prompt = full_prompt + (chr(10) * 2) + (chr(10)).join(_chain_notes)
 
+    # ★ v1.4.3: 用模型能力表把"分辨率 / 时长"校正到**该模型真支持**的组合。
+    #   以前直接用 shot 里存的值 —— 例如 doubao-seedance-2-0-fast 根本不支持
+    #   1080p（只支持 480P/720P），用户拿到的是
+    #   "InvalidParameter: the parameter resolution specified is not supported"。
+    #   现在自动挑一个能跑的最接近组合（720P / 时长向上取，宁多不少）。
+    _want_res = shot.get("resolution") or ""
+    _want_dur = int(shot.get("duration_seconds") or 5)
+    _res, _dur = _want_res, _want_dur
+    try:
+        from core.model_catalog import pick_valid_combo
+        _combo = pick_valid_combo(
+            shot.get("model_provider") or "",
+            shot.get("model_name") or "",
+            want_res=_want_res, want_dur=_want_dur,
+        )
+        # caps 用 "720P" 大写，adapter 用 "720p" 小写 —— 这里统一成小写
+        _res = str(_combo.get("resolution") or _want_res).lower()
+        _dur = int(_combo.get("duration") or _want_dur)
+        if _combo.get("adjusted"):
+            logger.info(
+                "参数已按模型能力调整: %s/%s %s%s -> %s%s",
+                shot.get("model_provider"), shot.get("model_name"),
+                _want_res, _want_dur, _res, _dur,
+            )
+    except Exception as _e:
+        logger.debug("模型能力校正跳过: %s", _e)
+
+    # ★★ v1.4.3 预算刹车（生成**前**）★★
+    #   2026-10-19 事故：没有预算闸门，一次完整流程扣了近 100 元。
+    #   现在每次生成前先估成本、查项目累计，超预算直接拒绝并说明差多少。
+    from core import budget as _budget
+    from core import pricing as _pricing
+
+    # 总闸：默认**关**（环境变量 + 设置开关都要开才放行）。
+    # 这一条是根治 —— 2026-10-19 的事故就是因为本函数**绕过了**
+    # dev 版本 core/shot_segments.py 里的三层花钱闸（主流程不走那条路）。
+    _budget.assert_spend_allowed(
+        db=db, provider=provider,
+        detail=f"（镜头 {shot.get('order_index')}，{provider}）")
+
+    _est = _pricing.estimate_cost_yuan(
+        provider, duration_seconds=int(_dur or 5),
+        resolution=_res, num_candidates=int(num_candidates or 1))
+    try:
+        _budget.check_budget(
+            shot.get("project_id") or "",
+            _est, db=db, provider=provider,
+            detail=f"（镜头：{shot.get('order_index')}）",
+        )
+    except _budget.BudgetExceeded as _be:
+        db.update_shot(shot_id, status="failed",
+                       error_message=f"预算不足，已阻止生成：{_be}", progress=0)
+        raise
+
     req = VideoGenRequest(
         prompt=full_prompt,
-        duration=min(shot["duration_seconds"], adapter.max_duration),
+        duration=min(_dur, adapter.max_duration),
         aspect_ratio=shot["aspect_ratio"],
-        resolution=shot["resolution"],
+        resolution=_res,
         reference_images=char_refs,
         first_frame=scene_ref,  # 场景图作为首帧
         character_reference=char_refs,
@@ -182,6 +284,34 @@ async def generate_shot_handler(payload: Dict[str, Any],
     fail_msg = None
     if not candidates:
         fail_msg = "；".join(errors[:3]) if errors else "全部候选生成失败（无更多信息）"
+    # ★ v1.4.3: 生成成功后把**可访问的** video_url / preview_image 写回 shot 行，
+    #   并放到返回值顶层。
+    #   原来只写 candidates + selected_candidate_id，shot.video_url 一直是 None，
+    #   agent 取 result["video_url"] 也永远取不到 → 对话框里既没有视频也没有图。
+    top_video_url = None
+    top_preview = None
+    if candidates:
+        _sel = candidates[0]
+        _lp = _sel.get("video_path")
+        top_video_url = _media_url(_lp) or _sel.get("video_url")
+        top_preview = _make_preview_frame(_lp, db)
+        # shots 表**没有** video_url / preview_image 列（视频存在 candidates JSON 里），
+        #   所以这里只把封面挂到候选上，不去 UPDATE 不存在的列。
+        if top_preview:
+            _sel["preview_image"] = top_preview
+            candidates[0] = _sel
+
+    # ★★ v1.4.3 成本累计（生成**后**）★★
+    if candidates:
+        try:
+            _spent = _pricing.estimate_cost_yuan(
+                provider, duration_seconds=int(_dur or 5),
+                resolution=_res, num_candidates=len(candidates),
+            )
+            _budget.add_cost(shot.get("project_id") or "", _spent, db=db)
+        except Exception as _ce:
+            logger.warning("成本累计失败（不影响生成）: %s", _ce)
+
     db.update_shot(
         shot_id,
         candidates=candidates,
@@ -195,6 +325,8 @@ async def generate_shot_handler(payload: Dict[str, Any],
         "shot_id": shot_id,
         "num_candidates": len(candidates),
         "candidates": candidates,
+        "video_url": top_video_url,
+        "preview_image": top_preview,
     }
 
 
@@ -373,27 +505,43 @@ def _compose_full_prompt(shot: Dict[str, Any]) -> str:
 
 
 def _get_llm_from_settings(settings: Dict[str, Any]) -> LLMClient:
-    """根据设置构造 LLM 客户端"""
+    """根据设置构造 LLM 客户端。
+
+    ★ v1.4.3 修真 bug：原来只认**旧字段** remote_llm_key / remote_llm_provider /
+      remote_llm_model，而设置页保存的是**新字段** llm_api_keys / llm_provider /
+      llm_model。结果：用户明明在设置里配了 MiniMax key，
+      orchestrator 里每一次 LLM 调用（脚本生成 / 角色建议 / 一致性检查）
+      都退回"deepseek + 空 key" → 401，agent 链路完全跑不通。
+
+      现在优先读新字段，回退旧字段；最后才用 LLMClient(settings=...) 的统一逻辑。
+    """
     if settings.get("enable_llm_local"):
-        # 本地 Ollama
         return LLMClient(
             provider="ollama",
-            base_url=settings.get("ollama_url", "http://localhost:11434"),
+            base_url=settings.get("ollama_url") or settings.get("ollama_base_url", "http://localhost:11434"),
             model=settings.get("ollama_model", "qwen2.5:7b"),
         )
-    elif settings.get("remote_llm_key"):
-        # 云端
+
+    provider = (settings.get("llm_provider")
+                or settings.get("remote_llm_provider") or "")
+    model = (settings.get("llm_model")
+             or settings.get("remote_llm_model") or "")
+    keys = settings.get("llm_api_keys") or {}
+    api_key = (keys.get(provider) if provider else "") or settings.get("remote_llm_key", "")
+
+    if provider and api_key:
+        return LLMClient(provider=provider, api_key=api_key, model=model)
+
+    if settings.get("remote_llm_key"):
         return LLMClient(
             provider=settings.get("remote_llm_provider", "deepseek"),
             api_key=settings["remote_llm_key"],
             model=settings.get("remote_llm_model", "deepseek-chat"),
         )
-    else:
-        # 默认 DeepSeek（不验证 key，但用户必须配）
-        return LLMClient(
-            provider="deepseek",
-            api_key=settings.get("remote_llm_key", ""),
-        )
+
+    # 兜底：交给 LLMClient(settings=...) 统一解析（它也只会拿到没配的 key，
+    # 但至少 provider/model 是对的，用户在设置里补上 key 就能用）
+    return LLMClient(settings=settings)
 
 
 async def generate_long_video(

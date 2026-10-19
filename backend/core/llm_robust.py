@@ -81,6 +81,15 @@ def normalize_text_response(content, provider=""):
     cleaned = _THINK_BLOCK_RE.sub("", content)
     cleaned = _UNCLOSED_THINK_BLOCK_RE.sub("", cleaned).strip()
     if not cleaned:
+        # ★ v1.4.3 兜底: 删掉 think 标签但保留标签内的内容。
+        #   有些模型把 JSON 放在 <think>...</think> 里面（不闭合的那种），
+        #   原来这里直接抛错，脚本生成整条链路断掉。
+        salvage = content
+        for tag in ("<think>", "</think>"):
+            salvage = re.sub(re.escape(tag), "", salvage, flags=re.IGNORECASE)
+        salvage = salvage.strip()
+        if salvage:
+            return salvage
         raise ValueError(
             f"[{provider or 'llm'}] returned empty text content after think-block cleanup"
         )

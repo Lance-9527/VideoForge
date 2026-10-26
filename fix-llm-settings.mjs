@@ -2,7 +2,8 @@
 const get = async () => (await (await fetch(B+'/api/settings')).json()).data
 const cur = await get()
 const llmKeys = { ...(cur.llm_api_keys ?? {}) }
-llmKeys.deepseek = 'sk-269fa34e29f8465b898704cfffbe1cea'
+// key 从环境变量读取，不能写进源码
+llmKeys.deepseek = process.env.DEEPSEEK_API_KEY || ''
 const patch = {
   llm_provider: 'deepseek',
   llm_model: 'deepseek-chat',

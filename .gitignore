@@ -91,3 +91,35 @@ Thumbs.db
 **/videoforge-seed/settings.yaml.bak-*
 **/credentials.yaml
 **/seed/credentials*.yaml
+
+# ──────────── 顶层一次性开发脚本（改 DSH 源码用的过程文件）────────────
+#   它们**不影响软件使用**，只是"我们怎么改 DSH"的过程记录。
+#   本地全部保留，只是不进公开仓库（已证明会藏真实 API Key）。
+/*.py
+/*.mjs
+/*.cjs
+/*.ps1
+/*.sh
+/*.bat
+/*.txt
+/*.log
+/*.pid
+/*.err
+/exp/
+/film/
+/shots/
+/tools/
+/tarcheck/
+/tarcheck2/
+/tarcheck3/
+/dist/
+/_release_backup/
+/master_files.txt
+/relid.txt
+# 白名单：仓库根要保留的
+!/README.md
+!/LICENSE
+!/CONTRIBUTING.md
+!/THIRD_PARTY_NOTICES.md
+!/.gitignore
+!/交付说明.md

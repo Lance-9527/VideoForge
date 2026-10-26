@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>VideoForge 提案卡 · 与蓝本对照</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0a0a0c; overflow: auto; }
+      #chat { padding: 24px 0 60px; }
+      .bubble { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+      .who { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+      .avatar { width: 26px; height: 26px; border-radius: 50%; background: #1f1f24;
+                border: 1px solid #2a2a30; display: flex; align-items: center;
+                justify-content: center; font-size: 13px; }
+      .name { color: #f0f0f3; font-size: 13px; font-weight: 600; }
+      .time { margin-left: auto; color: #7a7a85; font-size: 11px; }
+      #boot-err { color: #ff6b6b; font: 12px/1.6 Consolas, monospace; padding: 16px 24px;
+                  white-space: pre-wrap; }
+    </style>
+    <script>
+      window.__ModuleLoader__ = { load: function (r) { window.__VF_LOADED = r } }
+      window.__ERRS = []
+      window.addEventListener('error', function (e) {
+        var el = document.getElementById('boot-err')
+        if (el) el.textContent = String((e && e.error && e.error.stack) || (e && e.message) || e)
+      })
+    </script>
+  </head>
+  <body>
+    <div id="chat">
+      <div class="bubble">
+        <div class="who">
+          <div class="avatar">🎬</div>
+          <div class="name">VideoForge AI</div>
+          <div class="time">10:05</div>
+        </div>
+      </div>
+      <div class="bubble" id="root"></div>
+    </div>
+    <div id="boot-err"></div>
+    <script src="dist/card.iife.js"></script>
+  </body>
+</html>

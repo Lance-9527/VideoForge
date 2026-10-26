@@ -1,0 +1,49 @@
+{
+    "name": "@deepseek-ai/dsh-vf-video",
+    "version": "0.2.1-rc.2",
+    "description": "VideoForge bundle: 9-step pipeline tools over the Python sidecar (vf_status / vf_project / one tool per stage), with ctx.jobs progress and real cancellation.",
+    "license": "MIT",
+    "type": "module",
+    "main": "lib/index.js",
+    "exports": {
+        ".": "./lib/index.js",
+        "./cordis.patch.yml": "./cordis.patch.yml",
+        "./lib/*": "./lib/*",
+        "./package.json": "./package.json"
+    },
+    "files": [
+        "lib/index.js",
+        "lib/core.js",
+        "cordis.patch.yml",
+        "lib/vf-extra-tools.js",
+        "lib/vf-studio-tools.js"
+    ],
+    "dsh": {
+        "bundle": {
+            "patch": "./cordis.patch.yml"
+        }
+    },
+    "dependencies": {
+        "@deepseek-ai/dsh-zcode-browser-use": "workspace:*"
+    },
+    "peerDependencies": {
+        "@deepseek-ai/dsh-tools": "workspace:*",
+        "@deepseek-ai/dsh-client-ui-vf-studio": "workspace:*"
+    },
+    "peerDependenciesMeta": {
+        "@deepseek-ai/dsh-tools": {
+            "optional": true
+        },
+        "@deepseek-ai/dsh-client-ui-vf-studio": {
+            "optional": true
+        }
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+        "directory": "packages/video/vf-video"
+    }
+}

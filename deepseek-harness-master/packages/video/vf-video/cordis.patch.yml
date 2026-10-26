@@ -1,0 +1,120 @@
+# @deepseek-ai/dsh-vf-video —— VideoForge bundle 层
+#
+# 这是一层 patch（不是完整 composition）：它叠加在 `dsh-base` + `dsh-web-app` 之上，
+# 由 profile 的 `dsh.profile.bundles` 顺序决定先后；**同一行以最后写入者为准**
+# （见 packages/bundle/base/cordis.patch.yml 头部注释）。
+#
+# 所以本文件做两件事：
+#   ① 把被 web-app 层关掉的 model-facing job 控制器**重新打开**；
+#   ② 插入我们自己的 bundle 行（导出 vf_* 工具）。
+
+# ① tool-jobs（dsh-tool-jobs）是给 agent 装 job 控制器的那一半。
+#    packages/bundle/web-app/cordis.patch.yml:496 把它 `disabled: true` 关掉了
+#    （上游的理由：web 目录不再暴露 job_* 控制工具）。
+#    但对 VideoForge 是致命的：少了它，`ctx.jobs.start()` 会抛
+#      "background jobs unavailable: no job controller serves this agent"
+#    —— 也就是 vf_previz / vf_shots / vf_compose 全都不能用。
+#    本层在我们自己的组合里显式重新打开它（不改 core，只在本层覆盖）。
+- id: tool-jobs
+  disabled: false
+
+# ② 插入 VideoForge 工具行。
+#    config 会原样传给 src/index.js 的 apply(ctx, config)。
+- insert:
+    - id: vf-video
+      name: '@deepseek-ai/dsh-vf-video'
+      config:
+        # Python sidecar（backend/main.py）的地址；v3 起由 app 拉起 sidecar，
+        # 端口固定 8765（VIDEOFORGE_PORT 默认值）。
+        baseUrl: 'http://127.0.0.1:8765'
+        # 仅 legacy 回退路径使用（v2 /api/v2/* 可用时走 SSE，不轮询）。
+        pollMs: 3000
+        # ★ 2026-10-21：注册全部 8 个阶段工具。
+        #   不写这一行时 index.js 只注册 `S0_STAGE_KEYS`（core.js 里 cost==='free' 的
+        #   shots/previz/compose 三个），于是 vf_script / vf_assets / vf_looks /
+        #   vf_draft / vf_final **根本不存在**，agent 只能走 3/9 步 —— 产品"跑不通"。
+        #   花钱的三步（looks/draft/final）由 lib/index.js 的 `tools/pre-execute`
+        #   返回 {kind:'ask'} 交给原生 approval，不在工具内部挡。
+        stageKeys: ['script', 'assets', 'looks', 'shots', 'previz', 'draft', 'final', 'compose']
+
+# ③ VideoForge 壳：品牌位 + 落地工作台（client bundle，手写 ESM）
+#    这是我们自己的 patch 层，所以不动 core 的 web-app bundle patch。
+- insert:
+    - id: ui-vf-brand
+      name: '@deepseek-ai/dsh-client-ui-vf-brand'
+
+    - id: ui-vf-cards
+      name: '@deepseek-ai/dsh-client-ui-vf-cards'
+
+# ④ 关掉官方品牌占位：ui-brand-official 只在 DSH_CLIENT_BUILD_PROFILE=official
+#    （我们的打包正是 official）时注册，不关掉就会和我们的品牌抢 sidebar.brand.*。
+- id: ui-brand-official
+  disabled: true
+# ⑤ 侧边栏换成 VideoForge 的信息架构
+#
+#    关掉这三行（实测安全，启动 0 pending）：
+#      ui-plugin-manager → 「插件」图标行
+#      ui-schedule       → 「自动化任务」图标行
+#      ui-skill          → 「技能」图标行
+#
+#    ★★ ui-workspace **不能关**：它提供 client 端 `uiWorkspace` 服务，
+#       关掉后 sidebar / conversation / chat / reference / plan / goal / deliverables …
+#       共 13 个 UI bundle 全部 pending，boot 直接失败：
+#         Error: web boot: 13 entries did not activate
+#           @deepseek-ai/dsh-client-ui-sidebar: pending (waiting for service: uiWorkspace)
+#       「工作区」那一整段改用 **slot priority 覆盖**（见 ui-vf-brand）：
+#       `sidebar.workspaces` 是 single 槽，priority 升序、最低者渲染，
+#       上游占 priority 0 ⇒ 我们注册 priority: -10 即可压过它，且服务还在。
+- id: ui-plugin-manager
+  disabled: true
+- id: ui-schedule
+  disabled: true
+- id: ui-skill
+  disabled: true
+# ⑥ 停掉 S-C 的"全屏工作台面板"（它会盖住对话与侧边栏）。
+#    产品方向已改为"9 步在对话里走"（提案/审批/进度/产物卡），工作台面板不再是落地形态。
+#    包与代码保留：以后要把它作为右侧栏面板（rightbar）再启用时，把这行改成 disabled: false。
+- id: vf-workbench
+  disabled: true
+
+# ⑦ 把"不是做视频的工具"全部关掉（2026-10-21 真机实测后的产品决定）。
+#
+# 为什么必须关：装好的应用里，模型看到 shell / 文件 / 联网工具后会先去 `ls`、
+# `glob **/*`、试 PowerShell —— 而打包环境里 `pwsh` 起不来（退出码 3221225794 =
+# 0xC0000142 DLL 初始化失败），于是第一轮对话就卡在"探索环境"上，一步都没进流水线。
+# 用户的诉求是"说想法 → 出片子"，不是"给个通用 agent"。所以只留做视频要用的：
+#   · vf_*（我们自己的 9 步工具）
+#   · tool-jobs（后台任务/取消，必须留 —— 见 ①）
+#   · tool-result-pruner（长输出裁剪，纯守护）
+#   · tool-plugin-manager 保持上游默认（本层没动它）
+
+# ⑧ 去掉「标准模式」下拉（2026-10-22 用户要求：这个功能没必要）。
+#
+#   那个 chip 是 `ui-agent-preset` 注册在 `conversation.hero.agentPreset` 的
+#   Agent 预设选择器（标准/PTC/极简/创造）。VideoForge 的流程由 9 步 SOP 固定，
+#   预设模式对用户是纯噪音，所以整包关掉：chip、会话头部的那枚、以及"插件"里的
+#   "创建插件"入口和设置里的「Agent 预设」页会一起消失。
+- id: ui-agent-preset
+  disabled: true
+
+# ⑨ 创作工坊（视频复刻 + 电商商品视频，独立功能页）
+#   用户要求把「复刻视频」和「电商」做成单独的功能点，而不是塞进对话里。
+#   左栏出现「创作工坊」入口；页面两栏：视频复刻 / 电商商品视频。
+- insert:
+    - id: ui-vf-studio
+      name: '@deepseek-ai/dsh-client-ui-vf-studio'
+
+# ⑩ 侧栏自有浏览器（2026-10-25）：把 dsh-zcode-browser-use@0.9.0 挂进本 bundle。
+#
+#   装出来的 VideoForge 自带「右侧栏自有浏览器」：own_browser_open / navigate /
+#   snapshot / click / type / press / screenshot / status 这组工具，加上一个真正的
+#   Chromium guest tab（独立 cookie 分区、navigator.webdriver=false），登录态页面和
+#   反爬页面用这个，而不是内置 Browser tab（那个 cookie 罐不同，只能看到登录页）。
+#
+#   包已 vendor 进本 fork：packages/browser-use/dsh-zcode-browser-use/。上游原包是
+#   `dsh-zcode-browser-use@0.9.0`（无 scope），这里只改包身份（scope + 版本跟本仓
+#   发布族对齐），代码保持 0.9.0 原样；受影响的只有 lib/client.js 里 `__ModuleLoader__`
+#   的 load id（必须等于包名，否则 Node 半发布的 roster 行对不上）。
+- insert:
+    - id: zcode-browser-use
+      name: '@deepseek-ai/dsh-zcode-browser-use'

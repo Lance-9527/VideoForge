@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>VideoForge 工作台 · 本地渲染自检</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0f1115; overflow: hidden; }
+      /* 模拟 DSH 的 AppFrame：CSS Grid，第一轨 = 侧边栏宽度 */
+      #frame { position: relative; height: 100vh; display: grid;
+               grid-template-columns: 260px minmax(0, 1fr) 0px; background: #0b0d12; }
+      #mock-sidebar { grid-column: 1; border-right: 1px solid #232936; color: #8b93a7;
+                      font: 12px/1.9 "Microsoft YaHei", sans-serif; padding: 12px; }
+      #mock-main { grid-column: 2; color: #2b3346; font: 12px/1.9 "Microsoft YaHei", sans-serif;
+                   padding: 12px; }
+      #boot-err { position: fixed; left: 280px; bottom: 0; right: 0; color: #ff9b9b;
+                  font: 12px/1.6 Consolas, monospace; padding: 8px 12px; white-space: pre-wrap;
+                  max-height: 40vh; overflow: auto; background: rgba(0,0,0,.6); z-index: 99999; }
+      #probe { position: fixed; right: 8px; bottom: 8px; z-index: 99999; font: 12px sans-serif;
+               padding: 6px 10px; background: #2f6fed; color: #fff; border: 0; border-radius: 6px;
+               cursor: pointer; }
+    </style>
+    <script>
+      // DSH 的模块加载契约：client.js 顶层会调它。这里只做记录，不执行 factory
+      // （factory 需要 react，由打包后的 entry 提供）。
+      window.__ModuleLoader__ = {
+        load: function (record) { window.__VF_LOADED = record },
+      }
+      // 夹具自己的错误面板：任何异常都显示出来，不留白屏
+      window.__ERRS = []
+      window.addEventListener('error', function (e) {
+        window.__ERRS.push(String((e && e.error && e.error.stack) || (e && e.message) || e))
+        var el = document.getElementById('boot-err')
+        if (el) el.textContent = window.__ERRS.join('\n\n')
+      })
+      window.addEventListener('unhandledrejection', function (e) {
+        window.__ERRS.push('unhandled rejection: ' + String((e && e.reason && e.reason.stack) || (e && e.reason)))
+        var el = document.getElementById('boot-err')
+        if (el) el.textContent = window.__ERRS.join('\n\n')
+      })
+    </script>
+  </head>
+  <body>
+    <div id="frame">
+      <div id="mock-sidebar">
+        <b style="color:#6ea8ff">VideoForge</b><br />
+        项目<br />流水线<br />产物<br />
+        <span style="color:#39425a">（DSH 侧边栏模拟，工作台不许盖住这里）</span>
+      </div>
+      <div id="mock-main">DSH 主区（模拟）—— 工作台应该从这里开始</div>
+      <div data-shell-overlay style="position:absolute;inset:0;z-index:20;pointer-events:none">
+        <div id="root" style="height:100%;pointer-events:auto"></div>
+      </div>
+    </div>
+    <button id="probe">当前侧边栏 260px（点我切到 320 / 0）</button>
+    <div id="boot-err"></div>
+    <script>
+      var widths = [260, 320, 0], idx = 0
+      document.getElementById('probe').addEventListener('click', function () {
+        idx = (idx + 1) % widths.length
+        var w = widths[idx]
+        document.getElementById('frame').style.gridTemplateColumns = w + 'px minmax(0,1fr) 0px'
+        this.textContent = '当前侧边栏 ' + w + 'px（点我切换）'
+      })
+    </script>
+    <script src="dist/harness.iife.js"></script>
+  </body>
+</html>

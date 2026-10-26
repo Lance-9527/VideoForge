@@ -1,0 +1,33 @@
+{
+  "name": "@vf/vf-extra",
+  "version": "0.1.0",
+  "description": "VideoForge 增量能力：视频复刻 / 台词提取 / 电商商品视频（平台规格·合规体检·卖点改写·AI 标识）。全部走 Python sidecar 的 HTTP 接口，纯薄壳。",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./lib/core.js": "./lib/core.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/core.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.0.1-rc <2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  }
+}

@@ -1,0 +1,1104 @@
+/* VideoForge · 对话窗口样式 */
+
+/* ──── 附件（📎 图片 / txt / Word / PDF / Excel）────
+   2026-09-27 第 42 轮：输入区多了「附件」按钮与附件条。
+   抽文本在后端做，这里只管样子 —— 让用户一眼看出「传上了没有、读到了没有」：
+     ⏳ 正在上传   📎 已读取   ⚠ 传上了但没读出内容   ❌ 上传失败（悬停看原因）*/
+.attach-btn {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  margin: 0 6px 6px 6px;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--border-1);
+  background: var(--bg-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.attach-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--bg-3, var(--bg-2));
+}
+.chat-attach-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 8px 6px 8px;
+}
+.chat-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 260px;
+  padding: 3px 9px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: 999px;
+  border: 1px solid var(--border-1);
+  background: var(--bg-2);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-input-area.dragging {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  border-radius: 12px;
+}
+
+/* ──── 对话页布局 ──── */
+
+.chat-page {
+  padding: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--bg-0);
+}
+
+/* ──── 欢迎区 ──── */
+/* 取消内层滚动（原 flex:1 + overflow-y:auto 会产生一个多余的滑动区），
+   改为自然流式：内容完整展开，由页面统一滚动 */
+
+.chat-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-8) var(--space-6);
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+  overflow: visible;
+}
+
+.welcome-logo {
+  font-size: 56px;
+  margin-bottom: var(--space-3);
+  filter: drop-shadow(0 4px 24px rgba(122, 193, 48, 0.3));
+}
+
+.chat-welcome h1 {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  margin-bottom: var(--space-2);
+  background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.welcome-sub {
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-8);
+  text-align: center;
+}
+
+.welcome-suggestions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+  width: 100%;
+  margin-bottom: var(--space-8);
+}
+
+.suggestion-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--transition);
+}
+
+.suggestion-card:hover {
+  border-color: var(--accent-border);
+  background: var(--bg-3);
+  transform: translateY(-1px);
+}
+
+.suggestion-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+}
+
+.suggestion-title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  margin-bottom: 2px;
+}
+
+.suggestion-desc {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.welcome-quickstart {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+.welcome-quickstart h3 {
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+  color: var(--text-secondary);
+}
+
+.welcome-quickstart ol {
+  padding-left: 20px;
+  color: var(--text-secondary);
+  line-height: 1.9;
+  font-size: var(--text-sm);
+}
+
+.welcome-quickstart b {
+  color: var(--text-primary);
+}
+
+/* ──── 消息列表 ──── */
+
+.chat-messages {
+  /* 取消内层滚动：消息随页面自然增长（整页统一滚动，无嵌套滑动区） */
+  padding: var(--space-6) 0;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.msg {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  margin-bottom: var(--space-3);
+}
+
+.msg-user {
+  background: transparent;
+}
+
+.msg-assistant {
+  background: var(--bg-1);
+}
+
+.msg-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--bg-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.msg-user .msg-avatar {
+  background: var(--accent-soft);
+}
+
+.msg-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.msg-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.msg-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.msg-model {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+.msg-time {
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.msg-content {
+  color: var(--text-primary);
+  line-height: 1.7;
+  font-size: var(--text-base);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.msg-content strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.msg-inline-code {
+  background: var(--bg-3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--accent);
+}
+
+.msg-content ul {
+  margin: var(--space-2) 0;
+  padding-left: 24px;
+}
+
+.msg-content li {
+  margin-bottom: 4px;
+}
+
+.msg-code-wrapper {
+  position: relative;
+  margin: var(--space-2) 0;
+}
+
+.msg-code-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  opacity: 0;
+}
+
+.msg-code-wrapper:hover .msg-code-copy {
+  opacity: 1;
+}
+
+.msg-code-copy:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.msg-code {
+  background: var(--bg-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  overflow-x: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ──── 输入区 ──── */
+
+.chat-input-area {
+  position: sticky;              /* 输入框吸底：滚动消息时始终可见 */
+  bottom: 0;
+  z-index: 20;
+  border-top: 1px solid var(--border-1);
+  background: var(--bg-1);
+  padding: var(--space-4) var(--space-6);
+}
+
+.chat-input-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-xl);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  transition: border-color var(--transition);
+}
+
+.chat-input-wrapper:focus-within {
+  border-color: var(--accent);
+}
+
+.chat-input-wrapper textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: var(--space-2) 0;
+  resize: none;
+  max-height: 200px;
+  outline: none;
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.chat-input-wrapper textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.chat-input-actions {
+  display: flex;
+  align-items: flex-end;
+}
+
+.send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.send-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+  transform: scale(1.05);
+}
+
+.send-btn:disabled {
+  background: var(--bg-3);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+.chat-input-hint {
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin-top: var(--space-2);
+}
+
+/* ──── LLM Pill ──── */
+
+.llm-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.llm-pill:hover {
+  border-color: var(--accent-border);
+  background: var(--bg-4);
+}
+
+.llm-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 8px var(--accent);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.llm-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ──── LLM dropdown ──── */
+
+#llmDropdown {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-1);
+  min-width: 240px;
+  z-index: 1000;
+  display: none;
+}
+
+#llmDropdown.open {
+  display: block;
+}
+
+#llmDropdown .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--transition-fast);
+}
+
+#llmDropdown .dropdown-item:hover {
+  background: var(--bg-3);
+  color: var(--text-primary);
+}
+
+#llmDropdown .badge {
+  margin-left: auto;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+/* ──── Chat list ──── */
+
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* ──────────── Agent 执行轨迹 ────────────
+   工作区里的生成按钮全拿掉了，这块是用户唯一的进度反馈。
+   一个 agent 轮次可能跑 8 步、每步几十秒，所以必须让"正在干什么"可见，
+   否则界面看起来就是卡死了。 */
+
+.agent-trace {
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: var(--bg-3, rgba(127, 127, 127, 0.06));
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.agent-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.agent-step-text {
+  color: var(--text-primary);
+}
+
+.agent-step-tool {
+  margin-left: auto;
+  font-size: 10px;
+  opacity: 0.55;
+  background: transparent;
+  padding: 0 2px;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 转圈：纯 CSS，不引第三方库 */
+.agent-spin {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border: 1.5px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: agent-spin 0.7s linear infinite;
+}
+
+@keyframes agent-spin {
+  to { transform: rotate(360deg); }
+}
+
+.agent-ok,
+.agent-fail {
+  width: 11px;
+  flex: 0 0 11px;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.agent-ok { color: #2e9e5b; }
+.agent-fail { color: #d9534f; }
+
+/* 失败原因原文 —— 用户靠它判断"是缺 Key 还是模型拒了" */
+.agent-err {
+  flex: 1 0 100%;
+  margin-top: 2px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(217, 83, 79, 0.10);
+  color: #d9534f;
+  word-break: break-word;
+}
+
+.agent-note {
+  flex: 1 0 100%;
+  margin-top: 2px;
+  opacity: 0.8;
+  word-break: break-word;
+}
+
+.agent-warn {
+  flex: 1 0 100%;
+  margin-top: 2px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(230, 162, 60, 0.12);
+  color: #b8791f;
+  word-break: break-word;
+}
+
+/* ──────────── 白膜预演面板 ────────────
+   白膜的价值全在画面上。只显示一行 "OK" 用户没法确认运镜对不对，
+   整条"先白膜后成片"的流程就白设了。 */
+
+.agent-previz {
+  flex: 1 0 100%;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: var(--radius-sm);
+  background: var(--bg-2, rgba(127, 127, 127, 0.05));
+}
+
+.agent-previz-head {
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.agent-frames {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.agent-frame {
+  height: 96px;
+  width: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  display: block;
+  transition: transform var(--transition-fast, 0.15s);
+}
+
+.agent-frame:hover {
+  transform: scale(1.03);
+}
+
+.agent-previz-hint {
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.agent-previz-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.agent-previz-actions button {
+  font-size: var(--text-xs);
+  padding: 4px 10px;
+}
+
+.agent-previz-video {
+  margin-top: 8px;
+}
+
+/* B 档多机位联络表：横向铺开、可滚动，别压成看不清 */
+.agent-views {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  overflow-x: auto;
+}
+
+.agent-view {
+  width: 100%;
+  min-width: 320px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  display: block;
+}
+
+.agent-previz-video video {
+  width: 100%;
+  max-height: 220px;
+  border-radius: var(--radius-sm);
+  background: #000;
+}
+
+.agent-previz-ok {
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: #2e9e5b;
+}
+
+.agent-previz-degrade {
+  margin-top: 6px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(230, 162, 60, 0.10);
+  color: #b8791f;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.agent-ask-reason {
+  flex: 1 0 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2, rgba(127, 127, 127, 0.06));
+  font-size: var(--text-xs);
+}
+
+.agent-reason-btns {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.agent-reason-btns button {
+  font-size: var(--text-xs);
+  padding: 3px 9px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   可灵官方 MCP（免 API key）
+   ══════════════════════════════════════════════════════════════════
+   为什么单独一套样式：这条路上"额度"和"24 小时过期"是必须一眼看见的
+   信息 —— 额度为 0 还去点生成等于白试一次；链接过期没下载就等于没做。
+   所以余额用红绿对比色，下载按钮做成显眼的实心按钮。 */
+
+.agent-kling {
+  padding: 8px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: var(--radius-sm);
+  background: var(--bg-2, rgba(127, 127, 127, 0.05));
+}
+
+.agent-kling-rows {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  margin: 4px 0 6px;
+}
+
+.agent-ok-t { color: #2e9e5b; }
+.agent-bad-t { color: #d9534f; }
+
+.agent-note-line {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.agent-kling-out {
+  margin-top: 8px;
+}
+
+.agent-kling-out video,
+.agent-kling-out img {
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: #000;
+  display: block;
+}
+
+/* 可灵的成品 URL 24 小时就没了 —— 下载按钮要比普通链接显眼 */
+.agent-kling-out .agent-previz-actions a[download] {
+  font-weight: 600;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   白膜 C 档：多机位视频
+   ══════════════════════════════════════════════════════════════════
+   覆盖片放最上面（一条看完所有机位），单机位在下面横排。
+   用户要做的决定是"选哪个机位"，布局就该按这个决定来排。 */
+
+.agent-previz-c .agent-clip {
+  margin-top: 8px;
+}
+
+.agent-clip-head {
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.agent-clip video {
+  width: 100%;
+  max-height: 240px;
+  border-radius: var(--radius-sm);
+  background: #000;
+  display: block;
+}
+
+/* 覆盖片稍微矮一点 —— 它是"总览"，单机位才是要细看的 */
+.agent-clip-cut video {
+  max-height: 200px;
+  outline: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+}
+
+.agent-views-clips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  margin-top: 4px;
+}
+
+.agent-views-clips .agent-clip {
+  flex: 0 0 300px;
+  min-width: 300px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   通用媒体区（2026-09-24 新增）
+   ★ 为什么需要：对话里原来只有 render_previz / kling_* 两个分支会画图，
+     其它工具（make_looks / make_character_look / make_scene_look /
+     refine_look …）出的图**一张都不显示**，用户只看到一行 ✓。
+     现在按载荷形状兜底渲染，每个产物都带「下载」和「存为资产」。
+   ══════════════════════════════════════════════════════════════════ */
+.agent-media {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-2, rgba(127, 127, 127, 0.06));
+  border: 1px solid var(--border-1, rgba(127, 127, 127, 0.2));
+}
+
+.agent-media-head {
+  font-size: var(--text-sm, 13px);
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.agent-media-head .dim {
+  font-weight: 400;
+  font-size: var(--text-xs, 12px);
+}
+
+.agent-media-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.agent-media-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 320px;
+}
+
+.agent-media-card video {
+  max-width: 100%;
+  max-height: 260px;
+  border-radius: var(--radius-sm, 6px);
+  background: #000;
+}
+
+.agent-media-card .agent-frame {
+  max-width: 100%;
+  max-height: 240px;
+  width: auto;
+  height: auto;
+}
+
+.agent-media-name {
+  font-size: var(--text-xs, 12px);
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   待确认卡片（2026-09-24 新增）—— 「一步步走完、每步等你点头」的样子
+   ══════════════════════════════════════════════════════════════════ */
+.agent-gate {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: var(--radius-md, 10px);
+  background: linear-gradient(180deg,
+    rgba(80, 140, 255, 0.10), rgba(80, 140, 255, 0.04));
+  border: 1px solid rgba(80, 140, 255, 0.35);
+}
+
+.agent-gate-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: var(--text-sm, 14px);
+}
+
+.agent-gate-step {
+  font-size: var(--text-xs, 11px);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(80, 140, 255, 0.9);
+  color: #fff;
+  font-weight: 600;
+}
+
+.agent-gate-cost {
+  font-size: var(--text-xs, 12px);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-2, rgba(127, 127, 127, 0.14));
+  border: 1px solid var(--border-1, rgba(127, 127, 127, 0.25));
+}
+
+.agent-gate-why,
+.agent-gate-doing,
+.agent-gate-note {
+  margin-top: 7px;
+  font-size: var(--text-sm, 13px);
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+
+.agent-gate-doing { color: var(--text-primary); }
+.agent-gate-note { font-style: italic; }
+
+.gate-warn {
+  margin-top: 7px;
+  font-size: var(--text-sm, 13px);
+  color: var(--warning, #e6a23c);
+  line-height: 1.6;
+}
+
+.agent-gate-actions {
+  margin-top: 11px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agent-gate-actions button { font-size: var(--text-sm, 13px); }
+
+.agent-gate-tweaks {
+  margin-top: 9px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: var(--text-xs, 12px);
+}
+
+.gate-tweak {
+  font-size: var(--text-xs, 12px);
+  padding: 3px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  background: var(--bg-2, rgba(127, 127, 127, 0.1));
+  border: 1px dashed var(--border-1, rgba(127, 127, 127, 0.35));
+  color: var(--text-secondary);
+}
+
+.gate-tweak:hover { color: var(--text-primary); border-style: solid; }
+
+.agent-gate-msg { margin-top: 8px; font-size: var(--text-xs, 12px); }
+
+/* ══════════════════════════════════════════════════════════════════
+ * 第 46 轮（用户第 4/7 条）：对话里的图片/视频 + 等待进度
+ *   · .msg-media*     —— 消息正文下面的缩略图排（点一下全屏）
+ *   · .vf-media-*     —— 全屏灯箱
+ *   · .agent-elapsed  —— 每一步的秒表（本机出图一张 2~4 分钟，不能干等）
+ *   · .agent-hint     —— "大概要多久"的提示
+ * ══════════════════════════════════════════════════════════════════ */
+.msg-media { margin-top: 10px; }
+.msg-media-hint { font-size: var(--text-xs, 12px); color: var(--text-secondary); margin-bottom: 6px; }
+.msg-media-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.msg-media-cell {
+  position: relative; width: 132px; height: 92px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border-1, rgba(127,127,127,0.35)); cursor: zoom-in;
+  background: var(--bg-2, rgba(127,127,127,0.08));
+}
+.msg-media-cell img, .msg-media-cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.msg-media-cell:hover { border-color: var(--accent, #4a9eff); }
+.msg-media-tag {
+  position: absolute; top: 4px; left: 4px; font-size: 11px; padding: 1px 6px;
+  border-radius: 999px; background: rgba(0,0,0,0.55); color: #fff;
+}
+.msg-media-name {
+  position: absolute; bottom: 0; left: 0; right: 0; font-size: 11px; padding: 2px 6px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.65)); color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vf-media-overlay {
+  display: none; position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.88); align-items: center; justify-content: center;
+}
+.vf-media-overlay img, .vf-media-overlay video { max-width: 94vw; max-height: 92vh; border-radius: 6px; }
+.vf-media-close {
+  position: absolute; top: 16px; right: 22px; color: #fff; cursor: pointer;
+  font-size: 14px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.15);
+}
+.agent-elapsed {
+  margin-left: 8px; font-size: var(--text-xs, 12px); color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.agent-hint { margin-left: 6px; font-size: var(--text-xs, 12px); color: var(--text-secondary); opacity: 0.85; }
+
+/* ══════════════════════════════════════════════════════════════════
+ * 第 54 轮：资产页媒体区（frontend/js/asset_preview.js 用）
+ *   角色/场景图、已生成的镜头片段、白膜、成片 —— 缩略图 + 点击全屏。
+ *   风格刻意与对话里那套（.msg-media*）保持一致，用户在两个地方看到的是同一种东西。
+ * ══════════════════════════════════════════════════════════════════ */
+#assetMediaBox { margin: 4px 0 10px; }
+.ap-loading, .ap-empty { color: var(--text-secondary); font-size: var(--text-sm, 13px); padding: 8px 2px; }
+.ap-section { margin-bottom: 14px; }
+.ap-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.ap-head b { font-size: var(--text-sm, 13px); }
+.ap-hint { color: var(--text-secondary); font-size: var(--text-xs, 12px); }
+.ap-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.ap-cell {
+  position: relative; width: 128px; height: 88px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border-1, rgba(127,127,127,0.35)); cursor: zoom-in;
+  background: var(--bg-2, rgba(127,127,127,0.08));
+}
+.ap-cell img, .ap-cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ap-cell:hover { border-color: var(--accent, #4a9eff); }
+.ap-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+         color: var(--text-secondary); font-size: 22px; }
+.ap-tag, .ap-badge {
+  position: absolute; top: 4px; left: 4px; font-size: 11px; padding: 1px 6px;
+  border-radius: 999px; background: rgba(0,0,0,0.55); color: #fff;
+}
+.ap-missing { left: auto; right: 4px; background: rgba(180,60,60,0.85); }
+.ap-name {
+  position: absolute; bottom: 0; left: 0; right: 0; font-size: 11px; padding: 2px 6px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.65)); color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ap-foot { color: var(--text-secondary); font-size: var(--text-xs, 12px); margin-top: 6px; }
+.ap-overlay {
+  display: none; position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0,0,0,0.88); align-items: center; justify-content: center;
+}
+.ap-overlay img, .ap-overlay video { max-width: 94vw; max-height: 92vh; border-radius: 6px; }
+.ap-close {
+  position: absolute; top: 16px; right: 22px; color: #fff; cursor: pointer;
+  font-size: 14px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.15);
+}
+
+/* 「重出」按钮（资产卡右上角）：本机出图 2~4 分钟，所以按钮自己会走秒表 */
+.ap-act {
+  position: absolute; top: 4px; left: 4px; font-size: 11px; padding: 1px 7px;
+  border-radius: 999px; background: rgba(0,0,0,0.6); color: #fff; cursor: pointer;
+  user-select: none;
+}
+.ap-act:hover { background: var(--accent, #4a9eff); }
+.ap-act.ap-busy { background: rgba(200,140,0,0.9); cursor: progress; }
+.ap-edit {
+  position: absolute; top: 4px; right: 4px; font-size: 11px; padding: 1px 7px;
+  border-radius: 999px; background: rgba(0,0,0,0.6); color: #fff; cursor: pointer;
+  user-select: none;
+}
+.ap-edit:hover { background: #8a6cff; }
+.ap-prov {
+  margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: var(--text-xs, 12px);
+  background: var(--bg-2, rgba(127,127,127,0.08));
+  border: 1px solid var(--border-1, rgba(127,127,127,0.25)); color: var(--text-secondary);
+}
+.ap-prov code { color: var(--text-primary); }
+
+/* ──────────── 对话里的 Markdown 排版（2026-09-29，用户第 3 条「体验极差」）────────────
+   实测截图：AI 回了一堆 `| 项目 | 建议 |` 和 `## 标题`，界面**原样**显示成一片竖线井号。
+   原因：渲染器只认行内代码/粗体/`- ` 列表。现在补上了表格、标题、有序列表，
+   这里给它们配上样式 —— 不加样式的话表格会挤成一团、还是不好看。 */
+.msg-body .msg-table-wrap,
+.msg-bubble .msg-table-wrap {
+  margin: 8px 0;
+  max-width: 100%;
+  overflow-x: auto;                 /* 列多的时候横向滚，不撑破气泡 */
+}
+.msg-body .msg-table,
+.msg-bubble .msg-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm, 13px);
+  background: var(--bg-2, rgba(127,127,127,0.06));
+  border-radius: 8px;
+  overflow: hidden;
+}
+.msg-table th,
+.msg-table td {
+  border: 1px solid var(--border-1, rgba(127,127,127,0.25));
+  padding: 6px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.msg-table th {
+  background: var(--bg-3, rgba(127,127,127,0.14));
+  font-weight: 600;
+  white-space: nowrap;              /* 表头不折行，看着更像表 */
+}
+.msg-h {
+  margin: 10px 0 4px;
+  font-size: var(--text-base, 14px);
+  font-weight: 700;
+}
+.msg-body ol,
+.msg-bubble ol {
+  margin: 6px 0 6px 20px;
+  padding-left: 0;
+}

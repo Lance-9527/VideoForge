@@ -1,0 +1,93 @@
+# ──────────── 依赖 / 工具链 ────────────
+node_modules/
+.pnpm-store/
+.yarn/
+*.tsbuildinfo
+
+# ──────────── 编译产物（源码在 src/，产物不入库）────────────
+**/lib/
+**/dist/
+**/build/
+**/.next/
+**/out/
+*.js.map
+
+# ──────────── 打包产物 ────────────
+.desktop-build/
+apps/desktop/.desktop-build/
+dist/
+dist_fresh/
+dist_test/
+build_fresh/
+build_test/
+release/
+*.exe
+*.dll
+*.pyd
+*.so
+*.msi
+*.zip
+*.7z
+
+# ──────────── Python sidecar 的打包运行时（由构建脚本生成）────────────
+# ★ 注意：排除父目录后，git **不会**再进入该目录，
+#   所以要重新包含 backend 必须用 `_internal/*`（而不是 `_internal/`）。
+deepseek-harness-master/apps/desktop/resources/videoforge-sidecar/_internal/*
+!deepseek-harness-master/apps/desktop/resources/videoforge-sidecar/_internal/backend/
+
+# ──────────── 用户数据（**绝不入库**：含 API Key、用户素材、数据库）────────────
+**/data/
+!**/data/.gitkeep
+**/outputs/
+**/cache/
+**/media/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+**/kling_mcp.json
+**/pending_gates.json
+
+# ──────────── 开发过程中的临时脚本 / 日志（不属于产品）────────────
+/_sync*.py
+/diag-*.py
+/probe-*.mjs
+/probe-*.py
+/probe-*.py
+/check-*.mjs
+/check-*.cjs
+/check-*.py
+/test-*.mjs
+/test-*.py
+/*-snippet.txt
+/*.log
+/*_stdout.txt
+/*_stderr.txt
+/*.err
+/*.pid
+/tmp/
+/tarcheck*/
+/exp/
+/film/
+/shots/
+/tools/
+*.bak
+*.bak-*
+*.broken-*
+*.orig
+
+# ──────────── 编辑器 / 系统 ────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ★ 凭据文件（**绝不入库**：含真实 API Key 与浏览器会话 secret）
+**/videoforge-seed/credentials.yaml
+**/videoforge-seed/settings.yaml.bak-*
+**/credentials.yaml
+**/seed/credentials*.yaml

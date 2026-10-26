@@ -1,0 +1,18 @@
+# @vf/vf-extra —— VideoForge 增量能力 bundle 层
+#
+# 为什么是"外部插件"而不是改 asar：
+#   打包产物的插件代码在 174MB 的 app.asar 里，改它要解包/重打包，风险大。
+#   而宿主支持"外部插件 + profile bundles"（本机 @dsh-external/dsh-blender-plugin 就是这么跑的），
+#   所以新能力做成独立包，挂进 %LOCALAPPDATA%\VideoForge\dsh\profiles\desktop\package.json 即可。
+#
+# 本层只做一件事：插入我们自己的 plugin 行，config 原样传给 lib/index.js 的 apply(ctx, config)。
+
+- insert:
+    - id: vf-extra
+      name: '@vf/vf-extra'
+      config:
+        # Python sidecar 地址；打包版由 app 拉起，端口固定 8765（与 @deepseek-ai/dsh-vf-video 同源）。
+        baseUrl: 'http://127.0.0.1:8765'
+        # 复刻/抽台词/真烧 AI 标识都是长活（切镜+抽帧+OCR+ASR 可能几分钟），
+        # 这里给 30 分钟上限；快接口（方案/体检）在各自 spec 里另设小值。
+        longTimeoutMs: 1800000

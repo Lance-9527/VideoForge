@@ -1,0 +1,28 @@
+.launcher { flex: 1; min-width: 0; }
+.menuAnchor { width: 100%; }
+.more { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px; border: 0; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; cursor: pointer; -webkit-app-region: no-drag; }
+.more:hover, .button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dialog { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 100px); overflow: auto; padding: 24px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); -webkit-app-region: no-drag; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.header h2, .directory h3 { margin: 0; font-size: 18px; }
+.close { border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 24px; padding: 4px 10px; }
+.content { display: grid; gap: 16px; }
+.hint { color: var(--dsw-alias-label-secondary); line-height: 1.65; margin: 0; font-size: 13px; }
+.field { display: grid; gap: 7px; font-size: 13px; min-width: 0; }
+.field input { width: 100%; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-primary, #45454c); border-radius: 8px; padding: 10px 12px; background: var(--dsw-alias-bg-secondary, #17171b); color: inherit; font: inherit; outline-offset: 3px; }
+.codeRow { display: flex; gap: 12px; align-items: end; }
+.codeRow .field { flex: 1; }
+.button { border: 1px solid var(--dsw-alias-border-primary, #45454c); border-radius: 8px; padding: 10px 14px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.button:disabled { opacity: .5; cursor: default; }
+.primary { background: #76ad2c; color: #10150b; font-weight: 600; border-color: transparent; }
+.link { border: 0; padding: 6px; background: transparent; color: #8dc1f9; font: inherit; font-size: 13px; cursor: pointer; }
+.error { margin: 0; color: #f28a80; font-size: 13px; line-height: 1.6; }
+.section { max-width: 860px; padding: 12px; }
+.profile { display: grid; grid-template-columns: 110px 1fr; gap: 12px; margin: 0; font-size: 13px; }
+.profile dt { color: var(--dsw-alias-label-secondary); }
+.profile dd { margin: 0; overflow-wrap: anywhere; }
+.actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.directory { margin-top: 12px; display: grid; gap: 12px; }
+.tableWrap { max-width: 100%; overflow-x: auto; }
+.directory table { border-collapse: collapse; font-size: 12px; width: 100%; text-align: left; }
+.directory td, .directory th { padding: 10px 8px; border-bottom: 1px solid #45454c; white-space: nowrap; }

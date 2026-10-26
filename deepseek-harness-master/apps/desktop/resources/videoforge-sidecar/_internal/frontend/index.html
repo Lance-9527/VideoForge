@@ -1,0 +1,1913 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VideoForge · 私人 AI 短片 Agent</title>
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+  <link rel="stylesheet" href="css/chat.css">
+  <link rel="stylesheet" href="css/studio.css">
+</head>
+<body>
+  <!-- 顶部导航 -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo" id="logoBtn">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <rect x="2" y="6" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+          <path d="M22 10L26 7L26 21L22 18" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        <span class="logo-text">VideoForge</span>
+        <span class="logo-badge" id="logoVersion">v2.0.0</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <!-- 统一 AI 设置按钮（包含 LLM + 视频模型 + API keys） -->
+      <button class="ai-pill" id="aiSettingsBtn" title="AI 模型设置">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+        <span class="ai-pill-text" id="aiPillText">设置 AI</span>
+        <span class="ai-pill-status" id="aiPillStatus"></span>
+      </button>
+      <button class="icon-btn" id="themeBtn" title="主题">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <!-- 左侧导航 -->
+    <aside class="sidebar">
+      <!-- ══════════════════════════════════════════════════════════════
+           2026-09-24：「新建短片」按钮**已删除**（用户明确要求）。
+           原来它叫「新建短片」，但点下去只是 navigateTo('home')，
+           而 home 又被 PAGE_FALLBACK 改写成 chat —— 也就是按一个写着
+           "新建"的按钮，什么表单都不出现，只跳个页。名不副实比没有更糟。
+           现在新建短片就是在对话里说「我要做一个 XX 短片」，
+           由 agent 调 create_project 完成。导航只留三个入口。
+           ══════════════════════════════════════════════════════════════ -->
+
+      <nav class="nav-section">
+        <div class="nav-label">工作区</div>
+        <!-- ══════════════════════════════════════════════════════════════
+             2026-09-24：工作区**只留三个入口**
+               AI 对话 —— 所有生成动作都在这里说（含新建短片）
+               资产     —— 角色 / 场景 / 配音，三类放一页用 tab 切
+               后期     —— 拼接 / 配音 / 字幕 / 转场 / 成片
+
+             去掉的：
+               · 主页     —— 「新建短片」表单和按钮都取消，改为在对话里说；
+                             项目切换本来就在左下角「项目」列表里，不丢功能
+               · 剧本     —— 导入/生成剧本改为对话里说
+               · 场景     —— 并进「资产」的 tab
+             ★ 旧入口没有直接删掉，而是在 navigateTo 里做了**跳转兜底**
+               （见 app.js 的 PAGE_FALLBACK）—— 免得有代码/书签指过来时白屏。
+             ══════════════════════════════════════════════════════════════ -->
+        <button class="nav-item active" data-page="chat">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          AI 对话
+        </button>
+        <button class="nav-item" data-page="assets">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          资产
+        </button>
+        <button class="nav-item" data-page="postprocess">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          后期
+        </button>
+        <!-- ★ 2026-10-24：创作工具页（视频复刻 / 电商商品视频）。
+             两个功能点后端早就有（9 条路由 + 8 个 agent 工具），
+             但前端一个入口都没有 —— 用户只能靠对话让 agent 去调，界面上看不见。
+             这个入口补的就是那一层。逻辑在 js/tools.js。 -->
+        <button class="nav-item" data-page="tools">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          创作工具
+        </button>
+      </nav>
+
+      <nav class="nav-section">
+        <div class="nav-label">会话</div>
+        <div class="chat-list" id="chatList">
+          <div class="dim" style="padding: 8px 12px; font-size: 12px;">暂无会话</div>
+        </div>
+      </nav>
+
+      <nav class="nav-section">
+        <div class="nav-label">项目</div>
+        <!-- ★ 2026-10-20：项目多了以后（实测 40 个）原来只显示 20 个、且没法搜，
+             用户新建的项目直接看不见。这里加一个搜索框 + "显示更多"。 -->
+        <input id="projectSearch" class="project-search" placeholder="搜项目名字…"
+               autocomplete="off" spellcheck="false">
+        <div class="project-list" id="projectList">
+          <div class="dim" style="padding: 8px 12px; font-size: 12px;">暂无项目</div>
+        </div>
+        <div id="projectMore" class="project-more" style="display:none"></div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="version-info">
+          <div>本地运行 · SQLite</div>
+          <div id="ffmpegStatus" class="dim">FFmpeg: 检测中...</div>
+          <!-- 新电脑自检：缺 WebView2 / VC++ / 字体 等会在这里显示一个可点的徽标 -->
+          <div id="envBadge" class="dim" style="cursor:pointer;font-size:11px;margin-top:2px"
+               title="点一下看这台电脑的运行环境自检"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="content">
+      <!-- AI 对话（默认页） -->
+      <section class="page chat-page" data-page="chat">
+        <div class="chat-container" id="chatContainer">
+          <!-- 空状态：欢迎 -->
+          <div class="chat-welcome" id="chatWelcome">
+            <div class="welcome-logo">🎬</div>
+            <h1>VideoForge · 私人 AI 短片 Agent</h1>
+            <p class="welcome-sub">描述你的想法，我会帮你完成从创意到成片的每一步。</p>
+
+            <div class="welcome-suggestions">
+              <button class="suggestion-card" data-suggestion="我想做一个 30 秒的赛博朋克短片，主角在霓虹雨夜追凶">
+                <span class="suggestion-icon">🌃</span>
+                <div>
+                  <div class="suggestion-title">赛博朋克侦探短片</div>
+                  <div class="suggestion-desc">30 秒，电影感</div>
+                </div>
+              </button>
+              <button class="suggestion-card" data-suggestion="我想要拍一段古风仙侠 MV，3 分钟，女主觉醒后复仇">
+                <span class="suggestion-icon">🐉</span>
+                <div>
+                  <div class="suggestion-title">古风 MV</div>
+                  <div class="suggestion-desc">3 分钟，多人物</div>
+                </div>
+              </button>
+              <button class="suggestion-card" data-suggestion="帮我做一个 60 秒的产品广告，介绍一款 AI 编程助手">
+                <span class="suggestion-icon">📱</span>
+                <div>
+                  <div class="suggestion-title">产品广告</div>
+                  <div class="suggestion-desc">60 秒，现代感</div>
+                </div>
+              </button>
+              <button class="suggestion-card" data-suggestion="我想拍一个关于沙丘风格的故事，但是要避免直接复制原作">
+                <span class="suggestion-icon">🏜️</span>
+                <div>
+                  <div class="suggestion-title">IP 改编</div>
+                  <div class="suggestion-desc">自动版权脱敏</div>
+                </div>
+              </button>
+            </div>
+
+            <div class="welcome-quickstart">
+              <h3>你可以这样开始</h3>
+              <ol>
+                <li>📝 <b>直接描述想法</b>：例如"做一个 60 秒的武侠片，主角叫林青"</li>
+                <li>⚙️ <b>设置 AI 模型</b>：右上角 → 设置 → 配置 DeepSeek/Qwen/MiniMax/Kimi</li>
+                <li>🎬 <b>选视频模型</b>：可灵 / 通义万相 / Runway / Sora 等 11 个模型</li>
+              </ol>
+            </div>
+          </div>
+
+          <!-- 消息列表 -->
+          <div class="chat-messages" id="chatMessages"></div>
+
+          <!-- 输入区 -->
+          <div class="chat-input-area" id="chatInputArea">
+            <!-- ★ 2026-09-27 附件（图片 / txt / Word / PDF / Excel）
+                 用户要求：「对话框要支持图片、文件（txt、word、pdf等格式的）
+                 支持输入，而且能读取和识别」。
+                 抽文本在**后端**做（POST /api/chat/attach → core/attachments.py），
+                 前端只负责上传 + 把抽出来的正文并进这条消息 —— 见 chat.js 的
+                 `attachments` 那一段。 -->
+            <div class="chat-attach-bar" id="chatAttachBar" hidden></div>
+            <div class="chat-input-wrapper">
+              <button class="attach-btn" id="chatAttachBtn" type="button"
+                      title="添加附件：图片 / txt / md / csv / json / Word(.docx) / PDF / Excel(.xlsx)"
+                      onclick="Chat.pickAttachments()">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+                </svg>
+              </button>
+              <input type="file" id="chatFileInput" multiple hidden
+                     accept=".txt,.md,.markdown,.csv,.tsv,.json,.log,.srt,.ass,.yaml,.yml,.ini,.docx,.pdf,.xlsx,.xlsm,.png,.jpg,.jpeg,.webp,.bmp,.gif,.tif,.tiff"
+                     onchange="Chat.onFilesPicked(this.files); this.value='';">
+              <textarea
+                id="chatInput"
+                rows="1"
+                placeholder="描述你的短片想法，例如：做一个 60 秒的赛博朋克短片... Enter 发送，Shift+Enter 换行"></textarea>
+              <div class="chat-input-actions">
+                <button class="send-btn" id="sendChatBtn" onclick="sendChat()">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="chat-input-hint">
+              Enter 发送 · Shift+Enter 换行 · 📎 可传图片 / txt / Word / PDF / Excel（会读成文字给 AI）
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 主页 -->
+      <section class="page" data-page="home" hidden>
+        <div class="hero">
+          <h1>用 AI 拍你的下一部短片</h1>
+          <p>切到左侧的 <b>AI 对话</b>，直接告诉我你想做什么 —— 从创意到成片每一步都在对话里完成。</p>
+
+          <!-- ══════════════════════════════════════════════════════════
+               「新建短片」表单已**下架**（2026-09-24，用户要求）。
+               原因：新建项目、定题材、定时长这些事在对话里说更自然
+               （"做一个 60 秒的武侠片，主角叫林青"），
+               而且表单里那几个下拉框把"时长/风格/比例"变成了必须先想清楚的门槛 ——
+               对话里可以边聊边定。
+               ★ 保留这个 section 只是当跳转落点，真正的入口是对话。
+               ══════════════════════════════════════════════════════════ -->
+          <div class="quick-input" style="display:none">
+            <input id="heroPrompt" type="hidden">
+            <select id="heroDuration" style="display:none"></select>
+            <select id="heroStyle" style="display:none"></select>
+            <select id="heroAspect" style="display:none"></select>
+            <button id="heroCreateBtn" style="display:none"></button>
+          </div>
+        </div>
+
+        <div class="recent-section">
+          <h2>最近项目</h2>
+          <div class="project-grid" id="recentProjects"></div>
+        </div>
+      </section>
+
+      <!-- 剧本 -->
+      <section class="page" data-page="script" hidden>
+        <header class="page-header"><h2>📝 剧本工作台</h2>
+          <div class="header-actions">
+            <button class="primary-btn" id="importScriptBtn" title="导入你自己的剧本：txt / md / docx / pdf / json，或直接粘贴文字">📥 导入剧本</button>
+            <button class="secondary-btn" id="saveScriptBtn">保存</button>
+          </div>
+        </header>
+        <div class="script-content">
+          <div class="script-meta-bar" id="scriptMeta" hidden>
+            <div class="script-title" id="scriptTitle"></div>
+            <div class="script-logline" id="scriptLogline"></div>
+            <div class="script-tags" id="scriptTags"></div>
+          </div>
+          <div class="script-section">
+            <label>① 用户原始想法</label>
+            <textarea id="scriptUserPrompt" rows="2" placeholder="一句话描述你想拍什么，例如：一个赛博朋克侦探在霓虹雨夜追查 AI 凶案，60 秒短片"></textarea>
+            <div class="quick-controls" style="margin-top:8px">
+              <div class="control-group"><label>本片总时长</label>
+                <select id="scriptDuration" title="生成剧本时按这个秒数强制重排场次与每场秒数（不再听 AI 自己估）">
+                  <optgroup label="短片（几十秒）">
+                    <option value="5">5 秒</option>
+                    <option value="10">10 秒</option>
+                    <option value="15">15 秒</option>
+                    <option value="30">30 秒</option>
+                    <option value="45">45 秒</option>
+                  </optgroup>
+                  <optgroup label="常规（1-5 分钟）">
+                    <option value="60" selected>1 分钟</option>
+                    <option value="90">1 分 30 秒</option>
+                    <option value="120">2 分钟</option>
+                    <option value="180">3 分钟</option>
+                    <option value="300">5 分钟</option>
+                  </optgroup>
+                  <optgroup label="长片（10-30 分钟）">
+                    <option value="600">10 分钟</option>
+                    <option value="900">15 分钟</option>
+                    <option value="1200">20 分钟</option>
+                    <option value="1800">30 分钟</option>
+                  </optgroup>
+                </select>
+              </div>
+              <div class="control-group" style="align-self:center">
+                <span class="dim" id="scriptDurationHint" style="font-size:12px"></span>
+              </div>
+            </div>
+          </div>
+          <div class="script-section">
+            <label>② 专业剧本大纲（AI 生成 · 可直接编辑）</label>
+            <textarea id="scriptOutline" rows="16" class="script-outline-mono"
+              placeholder="点击右上角「💡 想法生成大纲」→ AI 按编剧格式输出：标题 / 一句话梗概 / 逐场次（地点·人物·按镜头动作·对白·情绪）"></textarea>
+          </div>
+          <div class="script-section">
+            <label>③ 场次列表（结构化 · 可生成细节与分镜）</label>
+            <div id="scriptScenes" class="scene-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 角色 -->
+      <section class="page" data-page="assets" hidden>
+        <header class="page-header">
+          <h2 id="assetPageTitle">📦 资产</h2>
+          <div class="header-actions" id="assetActions">
+            <!-- 每个 tab 有自己的操作按钮，用 JS 切显隐（保持原 id，避免动 JS 绑定） -->
+            <span data-tab-actions="characters">
+              <button class="primary-btn" id="addCharacterBtn">+ 新增角色</button>
+              <button class="secondary-btn" id="charFromLibraryBtn" title="从历史项目的角色资产中选择性加入当前剧本">📚 从资产库导入</button>
+              <!-- ★ 2026-09-28（用户第 7 条：资产页的选项要都能操作）：
+                   同一人物常常被抽成两张卡（「兵丁甲」/「稽查兵丁甲」）。
+                   重复卡会让"定妆照"这一步**永远做不完**（判据是每张卡都要有图），
+                   于是每次都问用户一遍。这个按钮负责找出来并合并。 -->
+              <button class="secondary-btn" id="mergeCharsBtn"
+                      title="找出疑似同一个人的多张角色卡并合并（合并后旧名字会留成别名，分镜自动改挂保留的那张）">🔗 合并重复角色</button>
+            </span>
+            <span data-tab-actions="scenes" hidden>
+              <button class="primary-btn" id="addSceneBtn">+ 新增场景</button>
+              <button class="secondary-btn" id="sceneFromLibraryBtn" title="从历史项目的场景资产中选择性加入当前剧本">📚 从资产库导入</button>
+              <!-- ★ 2026-09-29（用户第 2、7、8 条）：实测镜 3/4/5 的场景
+                   （金殿/天元座/灰巷）资产里没有卡 ⇒ 场景参考图永远用不上。
+                   这个按钮找出没场景卡的镜头、按分镜文字给草案，让用户改完再建卡。 -->
+              <button class="secondary-btn" id="fillMissingScenesBtn"
+                      title="找出没有关联场景卡的镜头，按分镜文字给你一份建卡草案（名字可以改）">🔍 补缺失场景</button>
+            </span>
+            <span data-tab-actions="voices" hidden>
+              <button class="secondary-btn" id="voicePoolRefreshBtn" title="重新拉取可用音色列表">↻ 刷新音色</button>
+            </span>
+            <!-- ★ 2026-09-27 第 71 轮：一个永远在的「刷新资产」按钮。
+                 用户实测「我手动删了资产后让对话重加还是看不到我要的资产」——
+                 对话里加好了，但这个页面不会自己重取（人站在这一页、
+                 对话在另一个 section 里跑完），所以给一个能自己按的入口。
+                 对话侧写完资产也会主动派 `vf:assets-changed` 自动刷新。 -->
+            <button class="secondary-btn" id="assetRefreshBtn"
+                    title="重新读取当前项目的角色 / 场景 / 分镜（对话里刚改过就点它）">↻ 刷新资产</button>
+          </div>
+        </header>
+
+        <!-- ══════════════════════════════════════════════════════════════
+             资产 = 角色 + 场景 + 配音，一页三个 tab（2026-09-24）
+             之前是三个独立导航项，用户要求合成一页。
+             ★ DOM 只搬位置、**id 一个都没改** —— 这样 app.js 里所有
+               `$('#characterGrid')` / `renderScenes()` 之类的绑定都不用动。
+             ══════════════════════════════════════════════════════════════ -->
+        <div class="asset-tabs" role="tablist">
+          <button class="asset-tab active" data-tab="characters" role="tab">🎭 角色</button>
+          <button class="asset-tab" data-tab="scenes" role="tab">🎬 场景</button>
+          <button class="asset-tab" data-tab="voices" role="tab">🎙 配音</button>
+          <!-- ★ 2026-09-27 第 70 轮新增：三级生成链路（白膜 → 草稿样片 → 成片）。
+               用户原话「我要求白膜就是为了生成视频前先确认要生成的动向之类的，
+               再用低价的视频 token 覆盖……所以你再优化下，做到我能用好」。
+               在此之前界面上**一个字都没提**这三档 —— 用户既不知道自己在哪一档、
+               下一档花多少钱，也不知道**自己这台模型根本没有"便宜那一档"**
+               （实测 doubao-seedance-1-0-pro 不接受 draft 参数），
+               于是"低价覆盖"这条省钱路线一次都没生效过，用户却以为一直在省。
+               放在资产页是因为**分镜页已经没有任何导航入口**，而这条链路必须看得见。 -->
+          <button class="asset-tab" data-tab="tiers" role="tab">🪜 生成链路</button>
+          <!-- ★ 2026-09-29 第 3 条（用户原话）：
+               「资产还包括已经生成的白膜视频 + 成品视频；资产里面的角色 + 场景
+                 都可以用户手动添加后确认使用」
+               在此之前生成出来的视频**散在磁盘上、界面里看不到**，
+               用户只剩"再生成一次"这一条路 —— 而库里其实早就有
+               5 个镜头的白膜 + 每镜 2 条配音版片段 + 合成成片。 -->
+          <button class="asset-tab" data-tab="media" role="tab">🎞 成片素材</button>
+          <span class="asset-tab-hint dim" id="assetTabHint"></span>
+        </div>
+
+        <!-- ── 角色 ── -->
+        <div class="asset-panel" data-panel="characters">
+          <div class="gen-explain" style="margin-bottom:var(--space-4)">
+            <b>这一页是干什么的？</b>
+            <span>这里是你的<b>角色资产库</b>：每个角色的外貌、服装、参考图都存在这儿，
+              生成视频时会被引用（对话框里写 <code>@角色名</code> 就是在引用它）。</span>
+            <span><b>新增/编辑请在本页手动改；要让 AI 从剧本提取角色、细化外貌设定，
+              直接在左边对话框里说一句话</b>（例如「从剧本里把人物提取成角色」「把林薇的外貌细化成固定字段」）。</span>
+            <span>角色外貌拆成<b>固定槽位</b>很重要：视频模型每个镜头都是独立生成的，
+              只写一段自由文本的话，第 1 个镜头和第 20 个镜头会给两张不同的脸。</span>
+          </div>
+          <div id="characterGrid" class="asset-grid"></div>
+        </div>
+
+        <!-- ── 场景 ── -->
+        <div class="asset-panel" data-panel="scenes" hidden>
+          <div class="gen-explain" style="margin-bottom:var(--space-4)">
+            <b>这一页是干什么的？</b>
+            <span>这里是你的<b>场景资产库</b>：每个地点的环境细节与参考图都存在这儿，
+              生成视频时会被引用（对话框里写 <code>@场景名</code> 就是在引用它）。</span>
+            <span><b>新增/编辑请在本页手动改；要让 AI 从剧本提取地点、细化环境设定，
+              直接在左边对话框里说一句话。</b></span>
+          </div>
+          <div id="sceneGrid" class="asset-grid"></div>
+        </div>
+
+        <!-- ── 配音 ── -->
+        <div class="asset-panel" data-panel="voices" hidden>
+          <div class="gen-explain" style="margin-bottom:var(--space-4)">
+            <b>配音资产是什么？</b>
+            <span>这里是<b>可用音色库</b>：按厂商分组列出所有能用的音色，可以<b>逐条试听</b>。
+              成片配音时按这里的音色来（后期页也按同一份清单走）。</span>
+            <span>想说「给林薇用这个音色」这类话，直接在对话框里说 ——
+              Agent 会把它记到角色上，后面每个镜头都按同一个音色配。</span>
+          </div>
+          <div class="voice-toolbar">
+            <label class="voice-provider-label">厂商
+              <select id="voicePoolProvider"><option value="">（全部）</option></select>
+            </label>
+            <label class="voice-provider-label">试听文本
+              <input type="text" id="voicePoolText" value="这是一段试听，用来听音色合不合适。">
+            </label>
+          </div>
+          <div id="voicePoolGrid" class="voice-pool-grid">
+            <div class="dim" style="padding:12px">加载中…</div>
+          </div>
+        </div>
+
+        <!-- ── 成片素材（已经生成出来的视频）2026-09-29 用户第 3 条 ── -->
+        <div class="asset-panel" data-panel="media" hidden>
+          <div class="gen-explain" style="margin-bottom:var(--space-4)">
+            <b>这一页是什么？</b>
+            <span>这里列的是<b>已经生成出来</b>的视频：每个镜头的
+              <b>白膜预演</b>、每一版<b>片段</b>（480P 小样 / 1080P 成片 / 配音版），
+              以及合成好的<b>成片</b>。
+              它们都是花过钱（或花过时间）的，所以<b>能复用就复用</b> ——
+              点某一版的「✅ 就用这一版」，后面的配音/合成/升级都以它为准。</span>
+          </div>
+          <div id="mediaAssetPanel"></div>
+        </div>
+
+        <!-- ── 生成链路（三级：白膜 → 草稿样片 → 成片）2026-09-27 第 70 轮 ── -->
+        <div class="asset-panel" data-panel="tiers" hidden>
+          <div class="gen-explain" style="margin-bottom:var(--space-4)">
+            <b>三级生成链路是什么？</b>
+            <span><b>G1 白膜（免费）</b>：本机渲线框预演，先把运镜/走位/节奏定下来，
+              不满意可以无限重渲 —— 一分钱不花。</span>
+            <span><b>G2 草稿样片（便宜）</b>：视频模型的低价档（480P），
+              确认画风与表演。</span>
+            <span><b>G3 成片（贵）</b>：在同一版草稿的基础上升到 1080P 交付。</span>
+            <span>关键在于**每一级都把上一级真正喂进去**：白膜会作为运镜/节奏的控制信号
+              发给模型（拿不到公网地址时如实降级成提示词）；草稿确认后再升成片。</span>
+          </div>
+          <div id="tierPanel">
+            <div class="dim" style="padding:12px">正在读项目状态…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 场景：内容已并进「资产」的 tab。这个 section 保留为空壳，
+           只为让 navigateTo('scenes') 的兜底有地方落（见 app.js）。 -->
+      <section class="page" data-page="scenes" hidden></section>
+
+      <!-- 分镜：只读 + 手动编辑。生成动作全部在对话里做。
+           ⚠ 这个页面没有导航入口了（用户要求工作区不放生成按钮），但**不能删** ——
+             renderStoryboard() / 抽帧看一眼 / 配音 都挂在这个 section 上，
+             删掉会让那些功能静默失效。 -->
+      <section class="page" data-page="storyboard" hidden>
+        <header class="page-header"><h2>🎞 分镜（只读 · 生成请到对话里说）</h2>
+          <div class="header-actions">
+            <button class="secondary-btn" id="framesheetBtn"
+                    title="把所有分镜已选中的候选片段抽帧拼成一张联络表，一眼看完 —— 这是发现「某个镜头末尾倒过来了」「几个镜头其实是同一张图」这类问题的唯一可靠办法（自动判据试过三种都不合格）">🎞 抽帧看一眼</button>
+            <button class="secondary-btn" id="refCheckBtn"
+                    title="体检：哪些分镜引用了已删除的角色 / 文字里提到某角色却没关联它。这类问题会让模型自己编一个人出来（生成前就该发现）">🩺 关联体检</button>
+          </div>
+        </header>
+        <div class="pp-guide" style="margin-bottom:var(--space-3)">
+          <div class="pp-guide-title">分镜怎么生成？</div>
+          <div class="pp-guide-steps">
+            <div class="pp-guide-step">
+              <span class="pp-guide-num">💬</span>
+              <div>
+                <b>直接在左边的对话框里说</b>
+                <div class="dim">例如「把剧本拆成分镜」「这个镜头改成长度 12 秒、白膜先渲一版看看」。
+                  Agent 会自己调工具去做，并把每一步的执行结果显示在对话里。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="shotList" class="shot-list"></div>
+      </section>
+
+      <!-- 生成页已移除：所有生成动作改为在对话里说一句话完成（见 chat.js 的 agent 事件渲染）。
+           留着这个空 section 是为了兜住 navigateTo('generate') 的旧调用 —— 没有它，
+           navigateTo 会把所有页面都隐藏掉，用户看到一片空白。 -->
+      <section class="page" data-page="generate" hidden></section>
+
+      <!-- 创作工具（2026-10-24 新增）：视频复刻 + 电商商品视频。
+           section 留在这里当落点；实际内容由 js/tools.js 的 renderTools() 建，
+           免得把 300 行 DOM 塞进这个已经 1900 行的文件。 -->
+      <section class="page" data-page="tools" hidden></section>
+
+      <!-- 后期 -->
+      <section class="page" data-page="postprocess" hidden>
+        <header class="page-header">
+          <h2>🎞 后期制作</h2>
+        </header>
+        <!-- 小白引导：这个页是干什么的、该按什么顺序点 -->
+        <div class="pp-guide" id="ppGuide">
+          <div class="pp-guide-title">这一页是干什么的？</div>
+          <div class="pp-guide-steps">
+            <div class="pp-guide-step">
+              <span class="pp-guide-num">1</span>
+              <div>
+                <b>先把分镜变成视频</b>
+                <div class="dim">在左边的<b>对话框</b>里说一句，例如「把第 1 个镜头出一版成片」。
+                  Agent 会先渲一版本地白膜给你确认，你点头之后才会真花钱生成。</div>
+              </div>
+            </div>
+            <div class="pp-guide-step">
+              <span class="pp-guide-num">2</span>
+              <div>
+                <b>在这里合成一条完整片子</b>
+                <div class="dim">点下面的【🎬 开始生成成片】。它会自动配音、加字幕、加转场，把分镜接起来。</div>
+              </div>
+            </div>
+            <div class="pp-guide-step">
+              <span class="pp-guide-num">3</span>
+              <div>
+                <b>下载 / 打开文件夹拿成品</b>
+                <div class="dim">合成完会出现播放器，下面有【⬇ 下载成片】和【📂 打开输出目录】。</div>
+              </div>
+            </div>
+          </div>
+          <div class="pp-guide-note">
+            💡 <b>不想花钱也能出片</b>：成片默认用本地合成（图片 + 运镜 + 配音 + 字幕 + 转场），不需要任何视频模型 Key。
+            如果你已经在对话框里用真实模型生成了分镜视频，这里会<b>优先用那些视频</b>。
+          </div>
+        </div>
+        <div class="postprocess-panel">
+          <!-- ══════════ 🎬 一键成片（主路径：不需要任何视频模型 Key） ══════════ -->
+          <div class="pp-section pp-compose" id="composeSection">
+            <h3>1. 🎬 一键成片 <span class="pp-badge">推荐 · 无需视频模型 Key</span></h3>
+            <p class="pp-desc">
+              把当前项目的<b>全部分镜</b>自动合成为一条成片：每个分镜用 AI 配音朗读，
+              画面自动从上往下找（分镜图 → 场景图 → 角色图 → 自动文字卡），
+              再加运镜、字幕与背景音乐。全程本地 FFmpeg + 免费 Edge TTS，<b>不消耗任何付费额度</b>。
+            </p>
+            <div class="pp-compose-grid">
+              <label>配音声音
+                <select id="composeVoice">
+                  <option value="">加载中…</option>
+                </select>
+              </label>
+              <label>画面比例
+                <select id="composeAspect">
+                  <option value="16:9">16:9 横屏</option>
+                  <option value="9:16">9:16 竖屏（抖音/视频号）</option>
+                  <option value="1:1">1:1 方形</option>
+                </select>
+              </label>
+              <label>BGM（可选）
+                <input type="file" id="composeBgm" accept="audio/*">
+              </label>
+              <label>BGM 音量
+                <input type="number" id="composeBgmVolume" value="0.25" min="0" max="1" step="0.05">
+              </label>
+              <label>镜头转场
+                <select id="composeTransition">
+                  <option value="auto" selected>自动（逐接缝判断，推荐）</option>
+                  <option value="cut">全硬切</option>
+                  <option value="dissolve">全溶解</option>
+                  <option value="dip">跨场景黑场</option>
+                </select>
+              </label>
+              <label>转场时长(秒)
+                <input type="number" id="composeTransitionSec" value="0.5" min="0.2" max="2" step="0.1">
+              </label>
+            </div>
+
+            <!-- ══════════════════════════════════════════════════════════
+                 逐镜转场（2026-09-24 新增）
+                 ★ 为什么要有这一块：分镜表上早就有 `transition` 字段、
+                   `compose_film` 也早就会读它（合成时自动生效），
+                   但**界面上一直没有地方设** —— 等于这个能力只存在于对话和数据库里。
+                   这里把每个镜头列出来，一刀一刀地设。
+                 ★ 语义：转场属于「**进入**这个镜头」的那一刀（与**前一个**镜头的接缝）。
+                   所以第 1 个镜头没有这一项。
+                 ══════════════════════════════════════════════════════════ -->
+            <details class="pp-shot-transitions" id="shotTransitionBox">
+              <summary>✂️ 逐镜转场（可选 · 比全局更细）
+                <span class="dim" id="shotTransitionBrief"></span></summary>
+              <div class="dim" style="margin:8px 0;line-height:1.7">
+                每个镜头设「**进入它**的那一刀怎么接上一个镜头」。<br>
+                留「自动」就交给拼接器逐接缝判断：<b>能硬切就硬切、跳变大的用溶解摊薄、跨场景用黑场</b> ——
+                这是最省钱也最好看的行为，没特别理由不用改。<br>
+                <span style="color:var(--warning,#e6a23c)">⚠ 这里设的值会<b>盖掉上面的全局转场</b>，只对对应那一个接缝生效。</span>
+              </div>
+              <div id="shotTransitionList" class="shot-trans-list">
+                <div class="dim" style="padding:8px">选择项目后这里会列出分镜…</div>
+              </div>
+              <div class="pp-controls" style="margin-top:10px">
+                <button class="primary-btn" id="saveShotTransitionsBtn"
+                        title="写进分镜表；以后合成不填参数也会带上">💾 保存到分镜表</button>
+                <button class="secondary-btn" id="resetShotTransitionsBtn"
+                        title="全部改回「自动」">↺ 全部改回自动</button>
+                <span class="dim" id="shotTransitionMsg" style="font-size:12px"></span>
+              </div>
+            </details>
+            <div class="pp-compose-opts">
+              <label><input type="checkbox" id="composeWithVoice" checked> AI 配音</label>
+              <label><input type="checkbox" id="composeBurnSubs" checked> 烧录字幕</label>
+              <label title="分镜没有现成画面时，调用图像模型按分镜内容生成一张（会消耗图像额度）">                <input type="checkbox" id="composeAutoImages" checked> 缺画面时自动生成
+              </label>
+              <label>图像模型 <select id="composeImageProvider" style="min-width:150px"></select></label>
+              <button class="secondary-btn" id="composePreviewVoiceBtn">▶ 试听音色</button>
+            </div>
+            <div class="pp-controls">
+              <button class="primary-btn pp-big" id="composeStartBtn">🎬 开始生成成片</button>
+              <button class="secondary-btn" id="composeCancelBtn" style="display:none">取消</button>
+              <span class="dim" id="composeHint">先选好项目与分镜，然后点这里。</span>
+            </div>
+            <div class="pp-compose-progress" id="composeProgressWrap" style="display:none">
+              <div class="pp-bar"><div class="pp-bar-fill" id="composeBar"></div></div>
+              <div class="pp-progress-text" id="composeProgressText">准备中…</div>
+            </div>
+            <div class="pp-compose-result" id="composeResult" style="display:none">
+              <video id="composePlayer" controls preload="metadata"></video>
+              <div class="pp-compose-meta" id="composeMeta"></div>
+              <div class="pp-controls">
+                <button class="secondary-btn" id="composeOpenFolderBtn">📂 打开输出目录</button>
+                <a class="secondary-btn" id="composeDownloadLink" download>⬇ 下载成片</a>
+              </div>
+              <div class="pp-compose-notes" id="composeNotes"></div>
+            </div>
+          </div>
+
+          <!-- ══════════ 🧱 后期流水线（逐步确认） ══════════ -->
+          <div class="pp-section pp-pipeline">
+            <h3>2. 🧱 后期流水线 <span class="pp-badge">逐步确认 · 可单独重做</span></h3>
+            <p class="pp-desc">
+              每一步都会<b>停下来让你看结果</b>：满意就点「下一步」，不满意就点「重做这步」或改参数再跑。
+              <b>重做某一步只会从上一部的成品继续，不会重新调用视频模型，不重复花钱。</b>
+            </p>
+            <div id="pipelineList" class="pipeline-list"></div>
+            <div class="pp-controls">
+              <button class="primary-btn" id="pipelineNextBtn">▶ 跑下一步</button>
+              <button class="secondary-btn" id="pipelineAllBtn">⏩ 全部跑完</button>
+              <button class="secondary-btn" id="pipelineResetBtn">↺ 从头再来</button>
+              <span class="dim" id="pipelineHint"></span>
+            </div>
+            <div class="pp-compose-progress" id="pipelineProgress" style="display:none">
+              <div class="pp-bar"><div class="pp-bar-fill" id="pipelineBar"></div></div>
+              <div class="pp-progress-text" id="pipelineText"></div>
+            </div>
+            <div class="pp-compose-result" id="pipelinePreview" style="display:none">
+              <video id="pipelinePlayer" controls preload="metadata"></video>
+              <div class="pp-compose-meta" id="pipelinePreviewMeta"></div>
+              <div class="pp-controls">
+                <button class="secondary-btn" id="pipelineOpenFolderBtn">📂 打开输出目录</button>
+                <a class="secondary-btn" id="pipelinePreviewDownload" download
+                   style="display:none">⬇ 下载这一步的结果</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="pp-section">
+            <h3>3. 📁 输出文件 <span class="pp-badge dim-badge">成片 / 分镜片段 / 导出件</span></h3>
+            <div class="pp-controls">
+              <button class="primary-btn" id="stitchBtn">🧩 拼接分镜片段 → final.mp4</button>
+              <label><input type="checkbox" id="addSubtitlesChk" checked> 拼接时烧字幕</label>
+              <button class="secondary-btn" id="refreshOutputsBtn">↻ 刷新列表</button>
+              <span class="dim" id="outputsHint">加载中…</span>
+            </div>
+            <div id="outputList" class="output-list"></div>
+          </div>
+
+          <div class="pp-section">
+            <h3>4. 📂 输出目录</h3>
+            <div class="pp-controls">
+              <input type="text" id="outputDirInput" placeholder="留空则用默认（数据目录下的 outputs）" style="flex:1;min-width:320px">
+              <button class="secondary-btn" id="browseOutputDirBtn">📂 浏览…</button>
+              <button class="primary-btn" id="saveOutputDirBtn">保存</button>
+              <button class="secondary-btn" id="openOutputDirBtn">打开目录</button>
+            </div>
+            <div class="dim" id="outputDirHint" style="margin-top:8px"></div>
+          </div>
+          <!-- ══════════ 🛠 高级工具（手动单步）—— 平时收起来，需要时展开 ══════════ -->
+          <details class="pp-advanced">
+            <summary>🛠 高级工具：手动单独做某一步<span class="dim">（默认收起 · 流水线里已经全自动做过了，这里用于只改一小处）</span></summary>
+            <div class="pp-advanced-body">
+          <div class="pp-section">
+            <h4>📐 多比例导出</h4>
+            <div class="pp-controls">
+              <label>源文件 <select id="exportSource" style="min-width:280px"></select></label>
+              <select id="exportAspect">
+                <option value="16:9">16:9 横屏</option>
+                <option value="9:16">9:16 竖屏（抖音/TikTok）</option>
+                <option value="1:1">1:1 方形（小红书）</option>
+              </select>
+              <button class="secondary-btn" id="exportAspectBtn">导出指定比例</button>
+            </div>
+          </div>
+
+          <div class="pp-section">
+            <h4>🎙 AI 配音<span class="pp-badge dim-badge">流水线第②步已包含</span></h4>
+            <div class="pp-controls pp-voice-controls">
+              <textarea id="voiceText" rows="3" placeholder="在这里输入旁白文本…（例如：深夜的城市霓虹灯下，侦探踏入未知的暗巷。）"></textarea>
+              <div class="pp-voice-row">
+                <label>声音
+                  <select id="voiceSelect" style="min-width: 280px;">
+                    <option value="">加载中…</option>
+                  </select>
+                </label>
+                <label>倍速
+                  <input type="number" id="voiceRate" value="1.0" min="0.5" max="2.0" step="0.1" style="width: 80px;">
+                </label>
+                <button class="secondary-btn" id="voicePreviewBtn" title="试听一小段（最多 12 字）">▶ 试听</button>
+                <button class="secondary-btn" id="voiceRefreshBtn" title="刷新 provider / 声音列表">↻ 刷新</button>
+              </div>
+              <div class="pp-voice-row">
+                <label>混到 <select id="voiceTarget" style="min-width:280px"></select></label>
+                <button class="primary-btn" id="applyVoiceBtn">应用配音（替换原音轨）</button>
+              </div>
+              <div class="pp-voice-hint dim" id="voiceHint">首次进入加载列表中…</div>
+            </div>
+          </div>
+
+          <div class="pp-section">
+            <h4>🎵 添加 BGM<span class="pp-badge dim-badge">流水线第④步已包含</span></h4>
+            <div class="pp-controls">
+              <label>混到 <select id="bgmTarget" style="min-width:260px"></select></label>
+              <input type="file" id="bgmFile" accept="audio/*">
+            </div>
+            <div class="pp-controls">
+              <label>BGM 音量 <input type="number" id="bgmVolume" value="0.25" min="0" max="1" step="0.05" style="width:80px"></label>
+              <label>淡入(秒) <input type="number" id="bgmFadeIn" value="1.5" min="0" max="10" step="0.5" style="width:80px"></label>
+              <label>淡出(秒) <input type="number" id="bgmFadeOut" value="2" min="0" max="10" step="0.5" style="width:80px"></label>
+              <button class="secondary-btn" id="addBgmBtn">混入 BGM</button>
+            </div>
+          </div>
+
+            </div>
+          </details>
+
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 剧本细节生成 Modal -->
+  <div class="modal-backdrop" id="sceneDetailModal" style="display: none;">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>📋 剧本细节生成（按 Skill 手册场次模板）</h3>
+        <button class="icon-btn" id="closeSceneDetailBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="scene-detail-toolbar">
+          <label>选择场次
+            <select id="sceneDetailSelect"></select>
+          </label>
+          <button class="primary-btn" id="generateSceneDetailBtn">⚡ 生成细节</button>
+        </div>
+        <div id="sceneDetailResult" class="scene-detail-result">
+          <div class="empty-state">
+            <div class="empty-state-icon">📝</div>
+            <div class="empty-state-text">选择一个场次，点击“生成细节”</div>
+            <div class="empty-state-hint">LLM 会按 Skill 手册的【场次模板】补全人物/按秒动作/对白/光影/情绪</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 资产库导入 Modal（角色 / 场景通用） -->
+  <div class="modal-backdrop" id="libraryModal" style="display: none;">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3 id="libraryModalTitle">📚 从资产库导入</h3>
+        <button class="icon-btn" id="closeLibraryBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="library-hint" id="libraryHint">
+          从历史剧本中已完成的资产中选择加入当前项目，导入后可在本项目继续编辑。
+        </div>
+        <div class="library-toolbar">
+          <input type="text" id="librarySearch" placeholder="搜索名称 / 描述…">
+          <button class="secondary-btn" id="librarySelectAllBtn">全选可见</button>
+          <button class="secondary-btn" id="libraryClearBtn">清空选择</button>
+          <span id="libraryCount" class="library-count">已选 0</span>
+        </div>
+        <div id="libraryList" class="library-list">
+          <div class="empty-state">
+            <div class="empty-state-icon">📦</div>
+            <div class="empty-state-text">加载中…</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span id="libraryStatus" class="settings-status"></span>
+        <button class="secondary-btn" id="cancelLibraryBtn">取消</button>
+        <button class="primary-btn" id="libraryImportBtn">导入选中</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通用弹窗（替代 WebView2 中失效的 window.prompt / confirm） -->
+  <div class="modal-backdrop" id="appModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="appModalTitle">提示</h3>
+        <button class="icon-btn" id="appModalClose">✕</button>
+      </div>
+      <div class="modal-body" id="appModalBody"></div>
+      <div class="modal-footer">
+        <button class="secondary-btn" id="appModalCancel">取消</button>
+        <button class="primary-btn" id="appModalOk">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置 Modal -->
+  <div class="modal-backdrop" id="settingsModal" style="display: none;">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>设置</h3>
+        <button class="icon-btn" id="closeSettingsBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <h4>🎬 AI 对话模型</h4>
+        <div class="settings-grid">
+          <label>默认 Provider
+            <select id="llmProviderSelect" data-llm-setting="llm_provider">
+              <option value="deepseek">DeepSeek（推荐）</option>
+              <option value="qwen">通义千问 Qwen</option>
+              <option value="glm">智谱 GLM</option>
+              <option value="kimi">Kimi 月之暗面</option>
+              <option value="MiniMax">MiniMax</option>
+              <!-- ★ 2026-09-28：这里原来**没有 anthropic** —— 而 MiniMax 的
+                   MiniMax-M3.1-Flash-Preview（1M 上下文、思考深度可调）主要
+                   走 Anthropic 兼容协议。下拉里没有它，用户就只能去库里改
+                   llm_provider，界面上根本选不到。 -->
+              <option value="anthropic">Anthropic 兼容（MiniMax M3.1 / 1M 上下文）</option>
+              <option value="doubao">豆包 Doubao</option>
+              <option value="hunyuan">腾讯混元</option>
+              <option value="ollama">Ollama 本地</option>
+              <option value="openai">OpenAI 兼容</option>
+            </select>
+          </label>
+          <label>默认模型
+            <select id="llmModelSelect" data-llm-setting="llm_model"></select>
+          </label>
+          <label>思考深度（只有 M3.1-Flash-Preview 认）
+            <select id="llmEffortSelect" data-llm-setting="llm_effort">
+              <option value="">默认（不指定）</option>
+              <option value="low">low（最快，思考最少）</option>
+              <option value="medium">medium</option>
+              <option value="high">high（推荐）</option>
+              <option value="xhigh">xhigh</option>
+              <option value="max">max（最充分，也最慢最贵）</option>
+            </select>
+          </label>
+        </div>
+        <h4 style="margin-top: 16px;">🔑 对话 API Keys</h4>
+        <div class="settings-grid">
+          <label>DeepSeek<input type="password" data-llm-key="deepseek" placeholder="sk-xxx"></label>
+          <label>通义千问 Qwen<input type="password" data-llm-key="qwen" placeholder="sk-xxx"></label>
+          <label>智谱 GLM<input type="password" data-llm-key="glm" placeholder="xxx"></label>
+          <label>Kimi 月之暗面<input type="password" data-llm-key="kimi" placeholder="sk-xxx"></label>
+          <label>MiniMax<input type="password" data-llm-key="MiniMax" placeholder="eyJxxx"></label>
+          <!-- ★ Anthropic 兼容协议用的 Key（MiniMax 的 M3.1-Flash-Preview 走这条；
+               与上面 MiniMax 那个可以填同一把 Key —— 实测同一把 sk-cp- 都能用） -->
+          <label>Anthropic 兼容（MiniMax M3.1）<input type="password" data-llm-key="anthropic" placeholder="sk-cp-xxx"></label>
+          <label>豆包 Doubao<input type="password" data-llm-key="doubao" placeholder="xxx"></label>
+          <label>腾讯混元<input type="password" data-llm-key="hunyuan" placeholder="sk-xxx"></label>
+          <label>OpenAI 兼容<input type="password" data-llm-key="openai" placeholder="sk-xxx"></label>
+          <label>Ollama URL<input type="text" data-llm-setting="ollama_base_url" placeholder="http://localhost:11434"></label>
+        </div>
+
+        <h4 style="margin-top: 16px;">🎥 视频模型 API Keys</h4>
+        <div class="settings-grid">
+          <label>可灵 Kling<input type="password" data-key="kling" placeholder="Kling API Key"></label>
+          <label>通义万相 Wanx<input type="password" data-key="wanx" placeholder="DashScope API Key"></label>
+          <label>即梦 Jimeng<input type="password" data-key="jimeng" placeholder="Volcengine API Key"></label>
+          <label>豆包 Seedance<input type="password" data-key="seedance" placeholder="Volcengine API Key"></label>
+          <label>海螺 Hailuo<input type="password" data-key="hailuo" placeholder="MiniMax API Key"></label>
+          <label>Runway<input type="password" data-key="runway" placeholder="Runway API Key"></label>
+          <label>Sora<input type="password" data-key="sora" placeholder="OpenAI API Key"></label>
+        </div>
+
+        <h4 style="margin-top: 16px;">🔊 语音合成 API Keys<span class="dim"
+            style="font-weight:400;font-size:11px;margin-left:8px">
+            只有标「需 Key」的厂商要填；Edge TTS 免费、不用填</span></h4>
+        <div class="settings-grid">
+          <label>硅基流动 SiliconFlow
+            <input type="password" data-tts-key="siliconflow" placeholder="sk-xxx">
+            <span class="dim" style="font-size:11px">
+              CosyVoice2 · 8 个预置音色 · 约 ¥0.5/万字 ·
+              <a href="https://cloud.siliconflow.cn/account/ak" target="_blank">去拿 Key</a>
+            </span>
+          </label>
+          <label>MiniMax 语音（海螺）
+            <input type="password" data-tts-key="minimax" placeholder="eyJxxx（和上面的 MiniMax 同一个 Key）">
+            <span class="dim" style="font-size:11px">
+              speech-02-hd · 中文自然度最好 · 用你已配的 MiniMax Key 即可</span>
+          </label>
+          <label>阿里云百炼（CosyVoice）
+            <input type="password" data-tts-key="dashscope" placeholder="sk-xxx（和通义千问同一个 Key）">
+            <span class="dim" style="font-size:11px">
+              CosyVoice v2 · 10 个中文音色 ·
+              <a href="https://bailian.console.aliyun.com/" target="_blank">去开通</a>
+            </span>
+          </label>
+        </div>
+        <div class="pp-controls" style="margin-top:8px;margin-bottom:10px">
+          <button class="secondary-btn" id="testTtsBtn"
+                  title="真的合成一小段来验证 Key 能不能用（约几分钱）">🔌 测试语音合成连通性</button>
+          <select id="testTtsProvider" style="min-width:200px">
+            <option value="siliconflow">硅基流动 SiliconFlow</option>
+            <option value="minimax">MiniMax 语音（海螺）</option>
+            <option value="dashscope">阿里云百炼（CosyVoice）</option>
+            <option value="edge">Edge TTS（免费）</option>
+          </select>
+          <span class="dim" id="ttsTestResult"></span>
+        </div>
+
+        <h4 style="margin-top: 16px;">🎙 配音模型
+          <span class="dim" style="font-weight:400;font-size:11px;margin-left:8px">
+            配音用哪个<b>型号</b>，在这里真正选（一键配音 / 生成时自动配音 / 出片都按它走）</span></h4>
+        <div id="ttsModelBox" class="settings-grid">
+          <span class="dim" style="font-size:11px">加载中…</span>
+        </div>
+        <div class="dim" style="font-size:11px;margin-bottom:10px" id="ttsModelNote"></div>
+
+        <h4 style="margin-top: 16px;">🖼 图像模型（给"没有画面的分镜"补画面）</h4>
+        <div class="settings-grid">
+          <label>默认图像模型
+            <select id="defaultImageProvider">
+              <option value="">（自动：用第一个配了 Key 的）</option>
+            </select>
+          </label>
+        </div>
+        <div class="dim" id="imageProviderHint" style="font-size:11px;margin-bottom:10px"></div>
+
+        <h4 style="margin-top: 16px;">🌐 白膜公网通道（长期用）
+          <span class="dim" style="font-weight:400;font-size:11px;margin-left:8px">
+            白膜视频要喂给视频模型时，模型必须能从公网把它取回去</span></h4>
+
+        <!-- ══════════════════════════════════════════════════════════════
+             ★★ 命名隧道（2026-09-25 新增）—— 「弄成长期的」的正解
+             临时隧道每次重启都换域名，地址发给厂商之后下次就失效了。
+             命名隧道用你自己的域名，**永久固定**。
+             装法：跑一次 scripts\装永久白膜隧道.ps1
+             ══════════════════════════════════════════════════════════════ -->
+        <div style="padding:10px;border-radius:8px;margin-bottom:12px;
+                    background:rgba(80,140,255,.08);
+                    border:1px solid rgba(80,140,255,.30)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px">
+            ⭐ 首选：命名隧道（域名永久固定，重启也不变）</div>
+          <div class="dim" style="font-size:11px;line-height:1.7;margin-bottom:8px">
+            需要一个你自己的域名（加进 Cloudflare 免费套餐即可）。
+            跑一次
+            <code style="font-size:11px">scripts\装永久白膜隧道.ps1</code>
+            会带你授权并建好隧道，然后把下面两个值填进来。<br>
+            <span style="color:var(--warning,#e6a23c)">
+            ⚠ 填了命名隧道就**不再起临时隧道**；填错会明确报错，不会偷偷退回临时方案
+            （免得你以为已经是长期方案了）。</span>
+          </div>
+          <div class="settings-grid">
+            <label>隧道名字（tunnel_named）
+              <input type="text" data-llm-setting="tunnel_named"
+                     placeholder="videoforge-previz">
+            </label>
+            <label>固定域名（tunnel_hostname）
+              <input type="text" data-llm-setting="tunnel_hostname"
+                     placeholder="previz.你的域名.com">
+              <span class="dim" style="font-size:11px">
+                可以只填域名，会自动补 https://</span>
+            </label>
+          </div>
+        </div>
+
+        <div style="font-size:12px;font-weight:600;margin:10px 0 6px">
+          备选一：你自己的公网主机 / 对象存储</div>
+        <div class="settings-grid" style="margin-bottom:8px">
+          <label>公网地址前缀（public_base_url）
+            <input type="text" data-llm-setting="public_base_url"
+                   placeholder="https://cdn.example.com/videoforge">
+            <span class="dim" style="font-size:11px">
+              你自己的对象存储 / 服务器 / 图床地址。<b>域名固定</b>。<br>
+              ⚠ 文件必须真的在那个地址下 —— 要么填下面的同步目录，
+              要么你自己上传。</span>
+          </label>
+          <label>同步目录（可选，填了就自动拷过去）
+            <input type="text" data-llm-setting="public_sync_dir"
+                   placeholder="D:\webroot\videoforge">
+            <span class="dim" style="font-size:11px">
+              上面那个地址对应的<b>本地根目录</b>。填了之后白膜渲完会
+              <b>自动复制过去</b>，不用手动上传。</span>
+          </label>
+        </div>
+        <div class="dim" style="font-size:11px;line-height:1.7;margin-bottom:10px">
+          <b>备选二：内置临时隧道</b>（上面两条都没配时自动用）——
+          能用，但域名**每次重启都变**，地址发给厂商后下次就失效。
+          只适合临时试一下。
+        </div>
+        <div class="pp-controls" style="margin-bottom:10px">
+          <button class="secondary-btn" id="testPublicChannelBtn"
+                  title="真的发布一个测试文件，并检查地址能不能取回"
+                  >🔌 测试白膜公网通道</button>
+          <span class="dim" id="publicChannelResult" style="font-size:11px"></span>
+        </div>
+
+        <h4 style="margin-top: 16px;">🤖 视频模型</h4>
+        <div class="settings-grid" style="margin-bottom:10px">
+          <label>单镜最长秒数（花费保护）
+            <input type="number" data-llm-setting="max_shot_seconds" min="0" max="60" step="1"
+                   placeholder="留空 = 不限制">
+            <span class="dim" style="font-size:11px">
+              <b>留空（推荐）= 不限制</b>，由模型的时长能力决定单段能多长
+              （如 Seedance 480p 可到 15 秒）。<br>
+              填了数字才会把单镜请求夹在这个上限内。<br>
+              ⚠ <b>不要填 5</b>：填 5 会把 13 秒的镜头拆成 3 个 5 秒段，
+              段与段要串联（上一段末帧当下一段首帧），而写实人脸会被平台的
+              隐私策略拒收 —— 结果是<b>一个镜头花 3 次钱、而且第 3 次必失败</b>。<br>
+              「一键成片」是本地合成，不受这条限制。</span>
+          </label>
+        </div>
+        <div class="settings-grid" style="margin-bottom:10px">
+          <label>配音
+            <select data-llm-setting="voiceover_mode">
+              <option value="auto">自动：有台词才配（默认）</option>
+              <option value="off">关闭：一律不配音</option>
+              <option value="on">总是尝试配音</option>
+            </select>
+            <span class="dim" style="font-size:11px">
+              选「关闭」后，所有出片路径都不会自动加人声 ——
+              适合先把画面做对、配音以后再说。<br>
+              另外：这不会把剧情概述念出来。没台词的镜头本来就不该有人声。</span>
+          </label>
+        </div>
+        <div class="settings-grid" style="margin-bottom:10px">
+          <label>默认视频模型（生成分镜时用它）
+            <select id="defaultVideoProvider">
+              <option value="">（自动：用第一个配了 Key 的）</option>
+            </select>
+          </label>
+          <label>默认模型名 / 接入点 ID
+            <input type="text" id="defaultVideoModel" placeholder="如 doubao-seedance-2-5-260628 或 ep-2024xxxx-xxxxx">
+          </label>
+        </div>
+        <div class="settings-grid" style="margin-bottom:8px">
+          <label>模型版本（带清晰度与可用时长说明）
+            <select id="videoCatalogSelect"><option value="">（先选上面的厂商）</option></select>
+          </label>
+          <label>该版本能做什么
+            <textarea id="videoCatalogAdvice" rows="3" readonly
+                      style="font-size:11px;line-height:1.6;background:var(--bg-2);border:1px solid var(--border-1);border-radius:8px;color:var(--text-secondary);padding:8px"></textarea>
+          </label>
+        </div>
+        <div class="pp-controls" style="margin-bottom:6px">
+          <button class="secondary-btn" id="discoverVideoModelsBtn"
+                  title="直接向厂商查询你账号下真实存在的模型 ID，从里面挑，不用猜">🔍 拉取可用模型清单</button>
+          <select id="discoveredVideoModels" style="min-width:320px;display:none">
+            <option value="">（先点「拉取可用模型清单」）</option>
+          </select>
+        </div>
+        <div class="pp-controls" style="margin-bottom:10px">
+          <button class="secondary-btn" id="testVideoModelBtn" title="只做鉴权与模型可用性检查，不真正出片">🔌 测试视频模型连通性</button>
+          <span class="dim" id="videoModelTestResult"></span>
+        </div>
+        <div id="availableProviders" class="provider-chips"></div>
+
+        <!-- ★ 技能与 MCP（用户："让 VideoForge 支持 skill 学习和 MCP 功能"）
+             放在设置里而不是工作区：工作区只保留「对话 + 资产 + 后期」，
+             这里是**配置**，不是每次创作都要看的东西。 -->
+        <h4 style="margin-top: 18px;">🧠 技能（Skill）</h4>
+        <div class="dim" style="font-size:11px;line-height:1.7;margin-bottom:6px">
+          技能是一套**可复用的做法**，存成文件后跨会话保留。
+          AI 对话时只看到「名字 + 一句话描述」，真正需要时才把正文加载进来 ——
+          所以技能装多了也不会拖慢对话。
+          你也可以直接在对话里说「记住这个流程」，AI 会自己学成一个技能。
+        </div>
+        <div class="pp-controls" style="margin-bottom:6px">
+          <button class="secondary-btn" id="refreshSkillsBtn">🔄 刷新技能列表</button>
+          <span class="dim" id="skillsStatus" style="font-size:11px"></span>
+        </div>
+        <div class="settings-grid" style="margin-bottom:8px">
+          <label>角色出图用「选角」提示词
+            <select data-llm-setting="use_casting_skill">
+              <option value="">（默认：开启）</option>
+              <option value="1">开启</option>
+              <option value="0">关闭（回落旧短提示词）</option>
+            </select>
+            <span class="dim" style="font-size:11px">
+              开启后角色提示词会带上 skill 的质感硬规则（禁蜡像感 / 中性白平衡 /
+              干净电影感人像）和剧本依据，提示词约 3000 字符；
+              关闭则回到约 260 字符的旧短提示词。
+              <b>平台提示词长度受限、或想出图更快时</b>可以关。</span>
+          </label>
+        </div>
+        <div id="skillsList" class="dim"
+             style="font-size:12px;line-height:1.7;max-height:220px;overflow:auto;
+                    background:var(--bg-2);border:1px solid var(--border-1);
+                    border-radius:8px;padding:8px">加载中…</div>
+
+        <h4 style="margin-top: 18px;">🔌 MCP 服务器</h4>
+        <div class="dim" style="font-size:11px;line-height:1.7;margin-bottom:6px">
+          MCP 让 VideoForge 能用上外部的工具与数据源（文件、数据库、第三方服务）。
+          <b style="color:var(--warn,#e0a030)">stdio 类型会在本机启动一个子进程，
+          等同于允许该命令以你的身份运行</b> —— 只添加你信任的服务器。
+        </div>
+        <div class="pp-controls" style="margin-bottom:6px">
+          <button class="secondary-btn" id="refreshMcpBtn">🔄 刷新</button>
+          <button class="secondary-btn" id="probeMcpBtn"
+                  title="真的去连每一台服务器一次，确认能不能用（会慢几秒）">🔌 逐个连通性检测</button>
+          <button class="secondary-btn" id="addMcpBtn">➕ 添加服务器</button>
+          <span class="dim" id="mcpStatus" style="font-size:11px"></span>
+        </div>
+        <div id="mcpServersList" class="dim"
+             style="font-size:12px;line-height:1.7;max-height:260px;overflow:auto;
+                    background:var(--bg-2);border:1px solid var(--border-1);
+                    border-radius:8px;padding:8px">加载中…</div>
+        <div id="mcpAddForm" hidden
+             style="margin-top:8px;padding:10px;background:var(--bg-2);
+                    border:1px solid var(--border-1);border-radius:8px">
+          <div class="settings-grid">
+            <label>名字（唯一）
+              <input type="text" id="mcpNewName" placeholder="filesystem">
+            </label>
+            <label>类型
+              <select id="mcpNewTransport">
+                <option value="stdio">stdio（在本机启动子进程）</option>
+                <option value="http">http（连一个 Streamable HTTP 端点）</option>
+              </select>
+            </label>
+          </div>
+          <div class="settings-grid" id="mcpStdioFields">
+            <label>命令（可执行文件）
+              <input type="text" id="mcpNewCommand" placeholder="npx / uvx / python，或绝对路径">
+            </label>
+            <label>参数（空格分隔）
+              <input type="text" id="mcpNewArgs" placeholder="-y @modelcontextprotocol/server-filesystem D:/docs">
+            </label>
+          </div>
+          <div class="settings-grid" id="mcpHttpFields" hidden>
+            <label>URL
+              <input type="text" id="mcpNewUrl" placeholder="http://127.0.0.1:8000/mcp">
+            </label>
+          </div>
+          <div class="pp-controls">
+            <button class="primary-btn" id="saveMcpBtn">保存并测试连接</button>
+            <button class="secondary-btn" id="cancelMcpBtn">取消</button>
+            <span class="dim" id="mcpAddResult" style="font-size:11px"></span>
+          </div>
+        </div>
+
+        <!-- ★ 关于 / 版权（用户："分享出去怎么证明版权是我的"）
+             署名与许可是版权保护的第一层：装到你朋友的电脑上，他也看得见作者与授权范围。 -->
+        <h4 style="margin-top: 18px;">© 关于 / 版权</h4>
+        <div id="aboutBox" class="dim"
+             style="font-size:12px;line-height:1.75;background:var(--bg-2);border:1px solid var(--border-1);border-radius:8px;padding:10px">
+          <div id="aboutLine">加载中…</div>
+        </div>
+        <div class="pp-controls" style="margin:8px 0 4px">
+          <button class="secondary-btn" id="aboutBtn" title="查看版权、许可范围与第三方组件">📄 版权与许可详情</button>
+          <span class="dim" id="aboutHint" style="font-size:11px"></span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span id="settingsStatus" class="settings-status"></span>
+        <button class="secondary-btn" id="testLlmBtn" title="用当前填写的 Key 测试 LLM 连接">测试 LLM</button>
+        <button class="primary-btn" id="saveSettingsBtn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 剧本导入 Modal -->
+  <div class="modal-backdrop" id="importScriptModal" style="display: none;">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>📥 导入剧本</h3>
+        <button class="icon-btn" id="closeImportScriptBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-text">
+          支持 <b>txt / md / json / docx / pdf / rtf</b> 文档，也可以直接把剧本文字粘贴到下面。
+          导入后会用 AI 结构化成分场剧本（场次 + 三层提示词），
+          随后「角色/场景提取 → 分镜 → 视频生成」全流程都能直接使用。
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">① 选择文档</label>
+          <input type="file" id="importScriptFile" accept=".txt,.md,.json,.csv,.docx,.pdf,.rtf">
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">② 或直接粘贴剧本文字<span class="modal-hint">与文档二选一，也可以都填（会合并）</span></label>
+          <textarea id="importScriptText" class="modal-input" rows="8" placeholder="把剧本正文粘贴到这里…"></textarea>
+        </div>
+        <div class="modal-field modal-check">
+          <label><input type="checkbox" id="importScriptStructurize" checked>
+            用 AI 结构化成分场剧本（推荐；取消则仅按原文切分场次）</label>
+        </div>
+        <div class="pp-compose-progress" id="importScriptProgress" style="display:none">
+          <div class="pp-bar"><div class="pp-bar-fill" id="importScriptBar"></div></div>
+          <div class="pp-progress-text" id="importScriptProgressText"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span id="importScriptStatus" class="settings-status"></span>
+        <button class="secondary-btn" id="cancelImportScriptBtn">取消</button>
+        <button class="primary-btn" id="doImportScriptBtn">开始导入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- 进度 -->
+  <div class="progress-overlay" id="progressOverlay" hidden>
+    <div class="progress-card">
+      <div class="progress-title" id="progressTitle">处理中...</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-message" id="progressMessage"></div>
+      <button class="secondary-btn" id="cancelProgressBtn">取消</button>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/chat.js"></script>
+  <script src="js/app.js"></script>
+  <!-- ★ 2026-10-24：创作工具页（视频复刻 / 电商商品视频）。
+       必须排在 api.js / app.js 之后 —— 它依赖 window.API 与 window.Toast。 -->
+  <script src="js/tools.js"></script>
+  <!-- 技能（Skill）与 MCP 管理面板。独立文件，出问题可以单独摘掉。 -->
+  <script src="js/skills_mcp.js"></script>
+  <script src="js/asset_preview.js"></script>
+
+<script>
+/* ============================================================
+ * VideoForge · 配音节事件处理（借鉴 MPT voice.py dispatcher）
+ * 单独块，不污染 app.js。
+ * ============================================================ */
+(function () {
+  const $ = (id) => document.getElementById(id);
+
+  let _voices = [];      // [{voice_id, display_name, language, gender, ...}]
+  let _previewAudio = null;
+
+  async function refreshVoiceList() {
+    const hint = $('voiceHint');
+    const select = $('voiceSelect');
+    try {
+      hint.textContent = '加载中…';
+      const [providerRes, voiceRes] = await Promise.all([
+        API.voice.providers(),
+        API.voice.voices(),
+      ]);
+      const providers = (providerRes && providerRes.providers) || [];
+      _voices = (voiceRes && voiceRes.voices) || [];
+      // 按 provider 分组
+      const byProv = {};
+      for (const v of _voices) {
+        const p = v.voice_id.split(':')[0] || 'other';
+        (byProv[p] = byProv[p] || []).push(v);
+      }
+      const providerLabel = {};
+      for (const p of providers || []) providerLabel[p.name] = p.display_name;
+      select.innerHTML = '';
+      for (const prov of Object.keys(byProv)) {
+        const og = document.createElement('optgroup');
+        og.label = providerLabel[prov] || prov;
+        for (const v of byProv[prov]) {
+          const opt = document.createElement('option');
+          opt.value = v.voice_id;
+          opt.textContent = v.display_name;
+          og.appendChild(opt);
+        }
+        select.appendChild(og);
+      }
+      const totalText = _voices.length + ' 个音色可选用';
+      const silentCount = _voices.filter(v => v.voice_id.startsWith('silent:')).length;
+      hint.textContent = silentCount > 0
+        ? totalText + '。  无配音模式可在 voice_id 写 silent:no-voice。'
+        : totalText + '。';
+      select.disabled = _voices.length === 0;
+    } catch (e) {
+      console.error(e);
+      hint.textContent = '加载失败：' + (e.message || e);
+    }
+  }
+
+  async function previewVoice() {
+    const sel = $('voiceSelect');
+    const txtEl = $('voiceText');
+    const txt = txtEl.value.trim();
+    if (!sel.value) { Toast.error('请先选声音'); return; }
+    if (!txt) { Toast.error('请输入试听文本'); return; }
+    const btn = $('voicePreviewBtn');
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '生成中…';
+    try {
+      const blob = await API.voice.preview(sel.value, txt);
+      if (_previewAudio) { _previewAudio.pause(); _previewAudio = null; }
+      const url = URL.createObjectURL(blob);
+      _previewAudio = new Audio(url);
+      _previewAudio.onended = () => btn.textContent = old;
+      _previewAudio.play();
+      btn.textContent = '播放中…';
+      Toast.success('试听已开始（点击浏览器 ▶ 可重播）');
+    } catch (e) {
+      Toast.error('试听失败：' + (e.message || e));
+    } finally {
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = old; }, 3000);
+    }
+  }
+
+  async function applyVoice() {
+    const project = State.currentProject;
+    if (!project || !project.id) { Toast.error('请先选择项目'); return; }
+    const sel = $('voiceSelect');
+    const textEl = $('voiceText');
+    const text = textEl.value.trim();
+    const rate = parseFloat($('voiceRate').value) || 1.0;
+    if (!sel.value) { Toast.error('请先选声音'); return; }
+    if (!text) { Toast.error('请输入配音文本'); return; }
+
+    // 找到 outputList 里第一个 mp4 文件（简化为最新生成的文件名）
+    const outputList = document.getElementById('outputList');
+    const firstItem = outputList && outputList.querySelector('[data-filename]');
+    const sourceFilename = firstItem ? firstItem.getAttribute('data-filename') : null;
+    if (!sourceFilename) { Toast.error('请先在「1. 拼接所有分镜」生成成片，再应用配音'); return; }
+
+    const applyBtn = $('applyVoiceBtn');
+    applyBtn.disabled = true;
+    try {
+      const res = await API.postprocess.addVoice(project.id, sourceFilename, sel.value, text, rate);
+      if (res.code !== '000000') {
+        Toast.error('配音失败：' + (res.message || JSON.stringify(res)));
+        return;
+      }
+      Toast.success('配音完成，文件：' + res.data.output_path);
+      // 刷新 outputList（如果暴露了刷新函数）
+      if (typeof refreshOutputList === 'function') refreshOutputList();
+      else location.reload();   // 兜底
+    } catch (e) {
+      Toast.error('配音异常：' + (e.message || e));
+    } finally {
+      applyBtn.disabled = false;
+    }
+  }
+
+  // 初始化
+  document.addEventListener('DOMContentLoaded', () => {
+    const refresh = $('voiceRefreshBtn');
+    const preview = $('voicePreviewBtn');
+    const apply = $('applyVoiceBtn');
+    if (refresh) refresh.addEventListener('click', refreshVoiceList);
+    if (preview) preview.addEventListener('click', previewVoice);
+    if (apply) apply.addEventListener('click', applyVoice);
+    // 首载
+    if ($('voiceSelect')) refreshVoiceList();
+  });
+})();
+
+/* ============================================================
+ * VideoForge · 一键成片（compose）
+ * 后端：POST /api/projects/{pid}/compose → 轮询 /compose/status
+ * 不依赖任何付费视频模型 Key：全本地 FFmpeg + 免费 Edge TTS
+ * ============================================================ */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let _timer = null;
+  let _voicesLoaded = false;
+  let _bgmB64 = '';
+
+  function project() {
+    return (typeof State !== 'undefined' && State.currentProject) || null;
+  }
+
+  async function loadComposeVoices() {
+    const sel = $('composeVoice');
+    if (!sel || _voicesLoaded) return;
+    try {
+      const res = await API.voice.voices();
+      const voices = (res && res.voices) || [];
+      if (!voices.length) { sel.innerHTML = '<option value="edge:zh-CN-XiaoxiaoNeural">晓晓 · 温柔女声（默认）</option>'; return; }
+      const byProv = {};
+      for (const v of voices) (byProv[v.voice_id.split(':')[0]] = byProv[v.voice_id.split(':')[0]] || []).push(v);
+      sel.innerHTML = '';
+      for (const p of Object.keys(byProv)) {
+        const og = document.createElement('optgroup');
+        og.label = p;
+        for (const v of byProv[p]) {
+          const o = document.createElement('option');
+          o.value = v.voice_id;
+          o.textContent = v.display_name;
+          og.appendChild(o);
+        }
+        sel.appendChild(og);
+      }
+      const prefer = ['edge:zh-CN-XiaoxiaoNeural', 'edge:zh-CN-YunxiNeural'];
+      for (const p of prefer) {
+        if ([...sel.options].some(o => o.value === p)) { sel.value = p; break; }
+      }
+      _voicesLoaded = true;
+    } catch (e) {
+      sel.innerHTML = '<option value="edge:zh-CN-XiaoxiaoNeural">晓晓 · 温柔女声（默认）</option>';
+    }
+  }
+
+  async function refreshFinal() {
+    const p = project();
+    const box = $('composeResult');
+    if (!p || !box) return;
+    try {
+      const info = await API.compose.finalInfo(p.id);
+      if (!info || !info.exists) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      const player = $('composePlayer');
+      const url = info.url || `/api/projects/${p.id}/final`;
+      if (player.getAttribute('src') !== url) player.setAttribute('src', url);
+      $('composeMeta').textContent =
+        `${info.filename} · ${(info.size_bytes / 1048576).toFixed(2)} MB · ${(info.duration || 0).toFixed(1)} 秒`;
+      $('composeDownloadLink').setAttribute('href', info.download_url || url);
+      $('composeDownloadLink').setAttribute('download', info.filename || 'final.mp4');
+      $('composeHint').textContent = '已有成片，可重新生成覆盖。';
+    } catch (e) { /* 没有成片很正常 */ }
+  }
+
+  async function onFile(ev) {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) { _bgmB64 = ''; return; }
+    const buf = await f.arrayBuffer();
+    let bin = '';
+    const bytes = new Uint8Array(buf);
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    _bgmB64 = btoa(bin);
+    Toast.success('已选择 BGM：' + f.name);
+  }
+
+  async function previewComposeVoice() {
+    const sel = $('composeVoice');
+    if (!sel || !sel.value) { Toast.warn('请先选音色'); return; }
+    try {
+      const blob = await API.voice.preview(sel.value, '这是一段音色试听，用来确认配音是否自然。');
+      new Audio(URL.createObjectURL(blob)).play();
+      Toast.success('试听中…');
+    } catch (e) { Toast.error('试听失败：' + (e.message || e)); }
+  }
+
+  function setProgress(pct, text) {
+    $('composeProgressWrap').style.display = '';
+    $('composeBar').style.width = Math.max(0, Math.min(100, pct)) + '%';
+    $('composeProgressText').textContent = text || '';
+  }
+
+  function stopPoll() {
+    if (_timer) { clearInterval(_timer); _timer = null; }
+    $('composeCancelBtn').style.display = 'none';
+  }
+
+  async function poll(pid) {
+    try {
+      const st = await API.compose.status(pid);
+      const pct = st.percent || 0;
+      setProgress(pct, `${pct.toFixed(0)}% · ${st.message || ''}`);
+      if (st.running) return;
+      stopPoll();
+      $('composeStartBtn').disabled = false;
+      $('composeStartBtn').textContent = '🎬 开始生成成片';
+      const r = st.result;
+      if (r && r.ok) {
+        Toast.success(`✅ 成片完成（${r.duration}s，${r.clip_count} 个分镜）`);
+        $('composeNotes').innerHTML = renderNotes(r);
+        await refreshFinal();
+      } else {
+        const msg = st.error || (r && (r.errors || []).join('；')) || '合成失败';
+        Toast.error('合成失败：' + msg);
+        $('composeNotes').innerHTML = renderNotes(r || { errors: [msg] });
+        Modal.open({
+          title: '❌ 成片生成失败',
+          html: `<div class="modal-text">${escapeHtml(msg)}</div>
+            <div class="modal-text" style="margin-top:10px;color:var(--text-tertiary)">
+            最常见原因：① 该项目还没有分镜 → 先去「分镜」页点「⚡ 自动从剧本生成」
+            ② 没有剧本 → 先去「剧本」页生成剧本 ③ 网络不通导致 Edge TTS 失败（会自动降级为静音）。</div>`,
+          okText: null, cancelText: '知道了',
+        });
+      }
+    } catch (e) {
+      stopPoll();
+      $('composeStartBtn').disabled = false;
+      $('composeStartBtn').textContent = '🎬 开始生成成片';
+      Toast.error('查询进度失败：' + (e.message || e));
+    }
+  }
+
+  function renderNotes(r) {
+    const out = [];
+    if (r.warnings && r.warnings.length) {
+      out.push('<b>提示</b><ul>' + r.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('') + '</ul>');
+    }
+    if (r.errors && r.errors.length) {
+      out.push('<b class="danger-text">错误</b><ul>' + r.errors.map(w => `<li>${escapeHtml(w)}</li>`).join('') + '</ul>');
+    }
+    if (r.clips && r.clips.length) {
+      out.push('<details><summary>分镜明细（画面来源 / 时长 / 字幕）</summary><ul>' +
+        r.clips.map(c => `<li>#${c.index + 1} · ${c.duration}s · 画面=${c.image_source} · 字幕${c.subtitle_count}条` +
+          (c.warnings && c.warnings.length ? ` · <span class="danger-text">${escapeHtml(c.warnings.join('；'))}</span>` : '') +
+          '</li>').join('') + '</ul></details>');
+    }
+    return out.join('');
+  }
+
+  async function loadComposeImageProviders() {
+    const sel = $('composeImageProvider');
+    if (!sel) return;
+    try {
+      const d = await API.images.providers();
+      const provs = (d && d.providers) || [];
+      sel.innerHTML = provs.map(p =>
+        `<option value="${p.name}"${p.name === (d.default_provider || 'minimax') ? ' selected' : ''}>${p.display_name || p.name}</option>`
+      ).join('') || '<option value="minimax">MiniMax 图像</option>';
+    } catch (e) {
+      sel.innerHTML = '<option value="minimax">MiniMax 图像</option>';
+    }
+  }
+
+  async function startCompose() {
+    const p = project();
+    if (!p || !p.id) { Toast.warn('请先在左侧选择一个项目'); return; }
+    const voice = $('composeVoice').value;
+    const withVoice = $('composeWithVoice').checked;
+    if (withVoice && !voice) { Toast.warn('请选择配音音色，或取消勾选「AI 配音」'); return; }
+
+    const btn = $('composeStartBtn');
+    btn.disabled = true;
+    btn.textContent = '生成中…';
+    $('composeCancelBtn').style.display = '';
+    $('composeNotes').innerHTML = '';
+    setProgress(0, '正在提交…');
+    try {
+      const r = await API.compose.start(p.id, {
+        voice_id: voice,
+        with_voice: withVoice,
+        burn_subtitles: $('composeBurnSubs').checked,
+        bgm_base64: _bgmB64,
+        bgm_volume: parseFloat($('composeBgmVolume').value) || 0.25,
+        // ★ 转场：这里的取值必须是后端认的那四个（auto/cut/dissolve/dip）。
+        //   原来只有 fade / none 两个选项 —— 而后端只认 auto/cut/dissolve/dip，
+        //   于是「硬切」发过去后走到 else 分支**悄悄变成自动**，
+        //   用户以为切了硬切、实际没有。这种"选项对不上后端"的静默偏差最难查。
+        transition: ($('composeTransition') || {}).value || 'auto',
+        transition_sec: parseFloat(($('composeTransitionSec') || {}).value) || 0.5,
+        target_resolution: $('composeAspect').value === '16:9' ? '' : $('composeAspect').value,
+        auto_images: $('composeAutoImages').checked,
+        image_provider: $('composeImageProvider') ? $('composeImageProvider').value : 'minimax',
+        image_size: $('composeAspect').value === '9:16' ? '720x1280' : '1280x720',
+      });
+      if (!r.started) Toast.warn(r.message || '该项目正在合成中');
+      if (_timer) clearInterval(_timer);
+      _timer = setInterval(() => poll(p.id), 1500);
+      poll(p.id);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = '🎬 开始生成成片';
+      stopPoll();
+      Toast.error('提交失败：' + (e.message || e));
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const start = $('composeStartBtn');
+    if (!start) return;    start.addEventListener('click', startCompose);
+    $('composeCancelBtn').addEventListener('click', async () => {
+      const p = project();
+      if (p) { try { await API.compose.cancel(p.id); } catch (e) {} }
+      stopPoll();
+      $('composeStartBtn').disabled = false;
+      $('composeStartBtn').textContent = '🎬 开始生成成片';
+    });
+    $('composePreviewVoiceBtn').addEventListener('click', previewComposeVoice);
+    $('composeBgm').addEventListener('change', onFile);
+    $('composeOpenFolderBtn').addEventListener('click', async () => {
+      const p = project();
+      if (!p) return Toast.warn('请先在左侧选择一个项目');
+      const btn = $('composeOpenFolderBtn');
+      const old = btn.textContent;
+      btn.disabled = true; btn.textContent = '正在打开…';
+      try {
+        const r = await API.compose.reveal(p.id);
+        const where = (r && r.opened) || '';
+        Toast.success('✅ 已打开输出目录：' + (where ? where.split('\\').slice(-2).join('\\') : ''));
+        // 二次确认式反馈：资源管理器可能开在应用后面，这里给出可复制的路径
+        Modal.open({
+          title: '📂 已打开输出目录',
+          html: `<div class="modal-text">文件资源管理器已打开下面这个位置（如果没看到，检查任务栏）：</div>
+            <pre style="white-space:pre-wrap;word-break:break-all;background:var(--bg-3);padding:10px;border-radius:8px;font-size:12px">${escapeHtml(where || '')}</pre>
+            <div class="modal-text dim">成片文件：final.mp4${r && r.has_final ? '（已存在）' : '（还没有，先点「开始生成成片」）'}</div>`,
+          okText: null, cancelText: '知道了',
+        });
+      } catch (e) { Toast.error('打开失败：' + (e.message || e)); }
+      finally { btn.disabled = false; btn.textContent = old; }
+    });
+    // 下载：用真正的附件链接（否则 WebView2 只会播放不落地）
+    const dl = $('composeDownloadLink');
+    if (dl) dl.addEventListener('click', (e) => {
+      if (!dl.getAttribute('href')) {
+        e.preventDefault();
+        return Toast.warn('还没有成片可下载，请先点「开始生成成片」');
+      }
+      Toast.info('开始下载，请稍候…（完成后在浏览器下载栏或输出目录里）');
+    });
+    // 切页时加载音色 + 已有成片
+    document.addEventListener('click', (e) => {
+      const nav = e.target.closest && e.target.closest('.nav-item[data-page="postprocess"]');
+      if (nav) { loadComposeVoices(); loadComposeImageProviders(); setTimeout(refreshFinal, 400); }
+    });
+    // 暴露给 app.js 的流水线用（finalize 之后要刷新成片卡片）
+    window.vfRefreshFinal = refreshFinal;
+
+    // 主页「总时长」提示：让用户看清长片意味着多少个镜头、大概多少次生成
+    (function () {
+      const sel = $('heroDuration');
+      const hint = $('heroDurationHint');
+      if (!sel || !hint) return;
+      const upd = () => {
+        const d = parseInt(sel.value, 10) || 0;
+        const shots = Math.ceil(d / 10);            // 按每个镜头约 10 秒估
+        const txt = d < 60 ? `${d} 秒 ≈ ${shots} 个镜头`
+          : `${(d / 60).toFixed(d % 60 ? 1 : 0)} 分钟 ≈ ${shots} 个镜头`;
+        hint.textContent = d >= 600
+          ? `${txt} · 长片镜头数很多，生成会分很多次调用模型，时间和费用都明显更高`
+          : `${txt} · 生成时按镜头逐个出片，可随时暂停`;
+      };
+      sel.addEventListener('change', upd);
+      upd();
+    })();
+
+    loadComposeVoices();
+    loadComposeImageProviders();
+    setTimeout(refreshFinal, 1200);
+  });
+})();
+
+/* ============================================================
+ * 视频模型连通性测试 + 默认视频模型设置
+ * 直接解决"配了 Key 到底能不能用"这个反复出现的问题
+ * ============================================================ */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let _loaded = false;
+
+  async function loadVideoModelSettings() {
+    const sel = $('defaultVideoProvider');
+    if (!sel || _loaded) return;
+    try {
+      const provs = ((await API.listProviders()) || {}).providers || [];
+      sel.innerHTML = '<option value="">（自动：用第一个配了 Key 的）</option>' +
+        provs.map(p => `<option value="${p.name}">${p.display_name || p.name}</option>`).join('');
+      sel.addEventListener('change', () => loadVideoCatalog());
+      const cfg = await API.videoModels.configured();
+      if (cfg.default_provider) sel.value = cfg.default_provider;
+      if (cfg.default_model) $('defaultVideoModel').value = cfg.default_model;
+      await loadVideoCatalog();
+      $('videoModelTestResult').textContent = (cfg.configured && cfg.configured.length)
+        ? '已配置 Key：' + cfg.configured.map(c => c.provider).join('、')
+        : '⚠ 还没有配置任何视频模型的 Key（不影响「一键成片」和「本地合成」出片）';
+      _loaded = true;
+    } catch (e) { /* 忽略 */ }
+  }
+
+  async function loadVideoCatalog() {
+    const provSel = $('defaultVideoProvider');
+    const catSel = $('videoCatalogSelect');
+    const advice = $('videoCatalogAdvice');
+    if (!catSel) return;
+    const p = (provSel && provSel.value) || 'hailuo';
+    try {
+      const r = await API.videoModels.catalog('video', p);
+      const models = (((r || {}).catalog || {}).models) || [];
+      if (!models.length) {
+        catSel.innerHTML = '<option value="">（该厂商暂无标注，请手填模型名）</option>';
+        if (advice) advice.value = '';
+        return;
+      }
+      catSel.innerHTML = models.map(m => {
+        const caps = m.caps || {};
+        const capTxt = Object.keys(caps).map(k => `${k}→${caps[k].join('/')}秒`).join(' · ');
+        return `<option value="${escapeHtml(m.id)}">${escapeHtml(m.label)}｜${escapeHtml(capTxt)}</option>`;
+      }).join('');
+      const upd = () => {
+        const m = models.find(x => x.id === catSel.value);
+        if (!advice) return;
+        if (!m) { advice.value = ''; return; }
+        advice.value = (m.best_for ? m.best_for + '\n' : '')
+          + (m.tags ? '标签：' + m.tags.join('、') + '\n' : '')
+          + (m.verified === false ? '该能力来自官方文档，未在本机实测' : '该能力已在本机用你的账号实测');
+      };
+      catSel.addEventListener('change', () => {
+        upd();
+        if ($('defaultVideoModel')) $('defaultVideoModel').value = catSel.value;
+      });
+      upd();
+    } catch (e) {
+      catSel.innerHTML = '<option value="">（加载失败，请手填）</option>';
+    }
+  }
+
+  /** 测试白膜公网通道：真发布一个探针文件，把三层状态说清楚 */
+  async function testPublicChannel() {
+    const btn = $('testPublicChannelBtn');
+    const out = $('publicChannelResult');
+    // 先存设置，否则用户刚填的地址测的是旧值
+    try { await saveSettings({ silent: true }); } catch (e) {}
+    btn.disabled = true; const old = btn.textContent; btn.textContent = '测试中…';
+    out.textContent = '正在发布探针文件并取回验证…';
+    try {
+      const r = await API.previz.channelTest();
+      const color = r.ok ? 'var(--success)' : 'var(--error)';
+      out.innerHTML = `<span style="color:${color}">${escapeHtml(r.verdict || '')}</span>`;
+      Modal.open({
+        title: '🌐 白膜公网通道',
+        html: `<div class="modal-text"><b>${escapeHtml(r.verdict || '')}</b></div>
+          <div class="modal-text" style="margin-top:10px">
+            当前模式：<code>${escapeHtml(r.mode || 'none')}</code>
+            · 已验证：${r.verified ? '是' : '否'}
+            · 已同步：${r.synced ? '是' : '否'}
+            ${r.fetch_status !== undefined ? ` · 取回 HTTP ${escapeHtml(String(r.fetch_status))}` : ''}
+          </div>
+          ${r.url ? `<div class="modal-text">地址：<code style="word-break:break-all">${escapeHtml(r.url)}</code></div>` : ''}
+          ${r.synced_path ? `<div class="modal-text dim">同步到：<code>${escapeHtml(r.synced_path)}</code></div>` : ''}
+          ${r.reason ? `<div class="modal-text dim">${escapeHtml(r.reason)}</div>` : ''}
+          ${r.warning ? `<div class="modal-text" style="color:var(--warning,#e6a23c)">⚠ ${escapeHtml(r.warning)}</div>` : ''}
+          ${r.how_to_fix ? `<div class="modal-text">👉 <pre style="white-space:pre-wrap;font-size:12px;background:var(--bg-3);padding:10px;border-radius:8px">${escapeHtml(r.how_to_fix)}</pre></div>` : ''}
+          <div class="modal-text dim" style="margin-top:10px">
+            这一层决定了「白膜确认之后，模型能不能真的按白膜的运动轨迹去生成」。</div>`,
+        okText: null, cancelText: '知道了', wide: true,
+      });
+    } catch (e) {
+      out.textContent = '测试失败：' + (e.message || e);
+    } finally { btn.disabled = false; btn.textContent = old; }
+  }
+
+  async function testVideoModel() {    const btn = $('testVideoModelBtn');
+    const out = $('videoModelTestResult');
+    btn.disabled = true; const old = btn.textContent; btn.textContent = '测试中…';
+    out.textContent = '正在向厂商发起鉴权与模型可用性检查…';
+    try {
+      const r = await API.videoModels.test({
+        provider: $('defaultVideoProvider').value || undefined,
+        model_name: $('defaultVideoModel').value || undefined,
+      });
+      if (r.ok) {
+        out.innerHTML = `<span style="color:#2ecc71">✅ ${escapeHtml(r.provider)} / ${escapeHtml(r.model || '')}：${escapeHtml(r.message || '可用')}</span>`;
+        Toast.success('视频模型可用');
+      } else {
+        out.innerHTML = `<span style="color:var(--error)">❌ ${escapeHtml(r.provider)}：${escapeHtml(r.error || '')}</span>`
+          + (r.hint ? `<br><span class="dim">👉 ${escapeHtml(r.hint)}</span>` : '');
+        Modal.open({
+          title: '🔌 视频模型不可用',
+          html: `<div class="modal-text"><b>${escapeHtml(r.provider)}</b> · ${escapeHtml(r.model || '')}</div>
+            <div class="modal-text" style="color:var(--error)">${escapeHtml(r.error || '')}</div>
+            ${r.hint ? `<div class="modal-text">👉 ${escapeHtml(r.hint)}</div>` : ''}
+            ${r.raw ? `<details><summary>厂商原始返回</summary>
+              <pre style="white-space:pre-wrap;font-size:12px;background:var(--bg-3);padding:10px;border-radius:8px">${escapeHtml(r.raw)}</pre></details>` : ''}
+            <div class="modal-text dim" style="margin-top:10px">
+              提示：即使这个模型暂时不可用，你依然可以用「本地合成 / 一键成片」出片（不需要任何 Key）。</div>`,
+          okText: null, cancelText: '知道了', wide: true,
+        });
+      }
+    } catch (e) {
+      out.textContent = '测试失败：' + (e.message || e);
+    } finally { btn.disabled = false; btn.textContent = old; }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  逐镜转场编辑器（2026-09-24）
+  // ══════════════════════════════════════════════════════════════════════
+  //  分镜表上一直有 `transition` 字段、compose_film 也一直会读它，
+  //  但界面上没地方设 —— 这个能力只存在于对话和数据库里。
+  //  这里把镜头列出来逐个设，保存后写回分镜表，以后合成自动带上。
+  const SHOT_TR = [
+    ['auto', '自动（推荐）'],
+    ['cut', '硬切'],
+    ['dissolve', '溶解'],
+    ['dip', '黑场'],
+  ];
+
+  async function loadShotTransitions() {
+    const box = document.getElementById('shotTransitionList');
+    if (!box) return;
+    const p = State.currentProject;
+    if (!p) {
+      box.innerHTML = '<div class="dim" style="padding:8px">先选一个项目</div>';
+      return;
+    }
+    box.innerHTML = '<div class="dim" style="padding:8px">正在取分镜…</div>';
+    let shots = [];
+    try {
+      const d = await API.shots.list(p.id);
+      shots = d.shots || [];
+    } catch (e) {
+      box.innerHTML = `<div class="dim" style="padding:8px">取分镜失败：${escapeHtml(e.message || e)}</div>`;
+      return;
+    }
+    if (!shots.length) {
+      box.innerHTML = '<div class="dim" style="padding:8px">这个项目还没有分镜 —— 去对话里说「拆分镜」。</div>';
+      return;
+    }
+    shots.sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+    box.innerHTML = shots.map((s, i) => {
+      const cur = (s.transition || 'auto').toLowerCase();
+      const opts = SHOT_TR.map(([v, t]) =>
+        `<option value="${v}"${v === cur ? ' selected' : ''}>${t}</option>`).join('');
+      const desc = escapeHtml(String(s.layer1_overview || '').slice(0, 28));
+      // 第 1 个镜头前面没有东西可接 —— 这一项禁用，并说明原因
+      const disabled = i === 0 ? ' disabled' : '';
+      const tip = i === 0 ? '第 1 个镜头前面没有镜头，不需要转场' : '进入这个镜头的那一刀怎么接';
+      return `<div class="shot-trans-row" title="${tip}">
+        <span class="shot-trans-idx">${i + 1}</span>
+        <span class="shot-trans-desc">${desc || '<i class="dim">（无描述）</i>'}</span>
+        <select data-shot="${escapeHtml(s.id)}"${disabled}>${opts}</select>
+      </div>`;
+    }).join('');
+    const n = shots.filter(s => (s.transition || 'auto') !== 'auto').length;
+    const brief = document.getElementById('shotTransitionBrief');
+    if (brief) brief.textContent = n ? `（已设 ${n} 个）` : '（当前全是自动）';
+  }
+
+  async function saveShotTransitions() {
+    const box = document.getElementById('shotTransitionList');
+    const msg = document.getElementById('shotTransitionMsg');
+    if (!box) return;
+    const p = State.currentProject;
+    if (!p) { if (msg) msg.textContent = '先选项目'; return; }
+    const sels = [...box.querySelectorAll('select[data-shot]')];
+    if (!sels.length) { if (msg) msg.textContent = '没有可保存的镜头'; return; }
+    const btn = document.getElementById('saveShotTransitionsBtn');
+    btn.disabled = true; const old = btn.textContent; btn.textContent = '保存中…';
+    const transitions = {};
+    sels.forEach(s => { transitions[s.dataset.shot] = s.value; });
+    const secs = parseFloat(($('composeTransitionSec') || {}).value) || 0;
+    try {
+      const r = await request('POST', `/api/projects/${p.id}/shot-transitions`,
+                              { transitions, seconds: secs });
+      const d = (r && r.data) || {};
+      const n = (d.updated || []).length, bad = (d.rejected || []).length;
+      if (msg) {
+        msg.textContent = bad
+          ? `已保存 ${n} 个，${bad} 个被拒（${(d.rejected || []).map(x => x.why).join('；')}）`
+          : `已保存 ${n} 个镜头到分镜表 ✓ 以后合成会自动带上`;
+        msg.style.color = bad ? 'var(--error)' : 'var(--success)';
+      }
+      if (!bad) Toast.success('逐镜转场已写入分镜表');
+      loadShotTransitions();
+    } catch (e) {
+      if (msg) { msg.textContent = '保存失败：' + (e.message || e); msg.style.color = 'var(--error)'; }
+    } finally { btn.disabled = false; btn.textContent = old; }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const sv = document.getElementById('saveShotTransitionsBtn');
+    if (sv) sv.addEventListener('click', saveShotTransitions);
+    const rs = document.getElementById('resetShotTransitionsBtn');
+    if (rs) rs.addEventListener('click', () => {
+      const box = document.getElementById('shotTransitionList');
+      box.querySelectorAll('select[data-shot]').forEach(s => {
+        if (!s.disabled) s.value = 'auto';
+      });
+      saveShotTransitions();
+    });
+    const bx = document.getElementById('shotTransitionBox');
+    if (bx) bx.addEventListener('toggle', () => { if (bx.open) loadShotTransitions(); });
+  });
+  // 切到后期页时也刷一次（可能刚在对话里改过分镜）
+  window.addEventListener('vf:page', (e) => {
+    if (e.detail === 'postprocess') loadShotTransitions();
+  });
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const b = $('testVideoModelBtn');
+    if (!b) return;
+    b.addEventListener('click', testVideoModel);
+    const pc = $('testPublicChannelBtn');
+    if (pc) pc.addEventListener('click', testPublicChannel);
+    const db = $('discoverVideoModelsBtn');
+    if (db) db.addEventListener('click', async () => {
+      const out = $('videoModelTestResult');
+      const sel = $('discoveredVideoModels');
+      db.disabled = true; const old = db.textContent; db.textContent = '查询中…';
+      out.textContent = '正在向厂商查询账号下的模型清单…';
+      try {
+        const prov = $('defaultVideoProvider').value || 'seedance';
+        const r = await API.videoModels.discover(prov);
+        if (!r.ok) { out.textContent = '❌ ' + (r.error || '查询失败'); return; }
+        const vids = r.video_models || [];
+        sel.style.display = '';
+        sel.innerHTML = '<option value="">（选择要用的模型 ID）</option>' +
+          vids.map(m => `<option value="${m.id}">${m.id}${m.usable ? '' : '（已停用）'}</option>`).join('');
+        out.textContent = `✅ ${prov} 账号下共 ${r.total} 个模型，其中视频类 ${vids.length} 个`;
+        if (!vids.length) Toast.warn('该账号下没有查到视频类模型');
+        sel.onchange = () => { if (sel.value) { $('defaultVideoModel').value = sel.value; Toast.success('已选：' + sel.value); } };
+      } catch (e) {
+        out.textContent = '❌ ' + (e.message || e);
+      } finally { db.disabled = false; db.textContent = old; }
+    });
+    document.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('#settingsBtn, [data-open-settings]')) {
+        setTimeout(loadVideoModelSettings, 300);
+      }
+    });
+    setTimeout(loadVideoModelSettings, 1500);
+  });
+})();
+</script>
+
+</body>
+</html>

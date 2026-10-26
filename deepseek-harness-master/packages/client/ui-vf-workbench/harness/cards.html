@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>VideoForge 对话卡片 · 四种一起看</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0a0a0c; overflow: auto; }
+      #boot-err { color: #ff6b6b; font: 12px/1.6 Consolas, monospace; padding: 16px 24px; white-space: pre-wrap; }
+      .hdr { position: sticky; top: 0; background: #0a0a0c; border-bottom: 1px solid #1f1f24;
+             padding: 10px 24px; color: #7a7a85; font: 12px sans-serif; z-index: 5; }
+    </style>
+    <script>
+      window.__ModuleLoader__ = { load: function (r) { window.__VF_LOADED = r } }
+    </script>
+  </head>
+  <body>
+    <div class="hdr">VideoForge 对话卡片预览 · 媒体为占位文件（真机指向 sidecar /api/media 与 /final）</div>
+    <div id="root"></div>
+    <div id="boot-err"></div>
+    <script src="dist/cards.iife.js"></script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+# @deepseek-ai/dsh-zcode-browser-use bundle patch: one row that registers the
+# upstream browser skills and the Playwright-backed `browser_*` tools.
+# VideoForge mounts this plugin from @deepseek-ai/dsh-vf-video's own patch; this
+# file is kept so the package remains a self-describing bundle.
+- insert:
+    - id: zcode-browser-use
+      name: '@deepseek-ai/dsh-zcode-browser-use'

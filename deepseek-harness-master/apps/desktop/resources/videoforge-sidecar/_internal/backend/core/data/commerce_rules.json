@@ -1,0 +1,396 @@
+{
+  "version": "2026-10-27",
+  "note": "商品图/商品视频的**可执行**校验规则集。每条规则都带 check.kind（可跑的校验类型）、severity（error=阻断 / warn=警告 / manual=需人工）、source（出处与可信度）。confidence=low 的规则请按你自己类目的官方规则核对后再当准。",
+  "platforms": {
+    "taobao": {
+      "label": "淘宝/天猫",
+      "note": "主图/详情图 + AI 标识"
+    },
+    "jd": {
+      "label": "京东",
+      "note": "主图 800x800 起"
+    },
+    "pdd": {
+      "label": "拼多多",
+      "note": "主图 1:1、白底、无水印"
+    },
+    "douyin": {
+      "label": "抖音电商",
+      "note": "主图 1:1 + AI 标识"
+    },
+    "xiaohongshu": {
+      "label": "小红书",
+      "note": "商品图/笔记图"
+    },
+    "amazon": {
+      "label": "Amazon",
+      "note": "主图纯白背景、占画面 85%"
+    },
+    "shopify": {
+      "label": "Shopify",
+      "note": "自定义为主"
+    },
+    "cn_all": {
+      "label": "国内全平台",
+      "note": "AI 标识强制（法规）"
+    }
+  },
+  "rules": [
+    {
+      "id": "cn.ai_label.explicit.image",
+      "scope": "image",
+      "platforms": [
+        "cn_all",
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin",
+        "xiaohongshu",
+        "amazon",
+        "shopify"
+      ],
+      "severity": "manual",
+      "title": "AI 生成内容必须有显式标识",
+      "check": {
+        "kind": "ai_marker",
+        "params": {
+          "region": "corner",
+          "min_coverage": 0.0015
+        }
+      },
+      "fix": "人工确认右下角有『AI生成』显著角标；导出文件内也必须带显式标识",
+      "why": "《人工智能生成合成内容标识办法》第四条(三): 图片须在适当位置添加显著提示标识; 第九条/第十条: 无标识需先约定标识义务并留存日志≥6个月, 且不得恶意隐匿标识。(机器无法可靠判定角标是否显著, 故列为人工项)",
+      "source": {
+        "type": "regulation",
+        "title": "人工智能生成合成内容标识办法（国信办通字〔2025〕2号）",
+        "url": "https://www.cac.gov.cn/2025-03/14/c_1743654684782215.htm",
+        "clause": "第四条(三)/第九条/第十条",
+        "effective": "2025-09-01",
+        "confidence": "high"
+      }
+    },
+    {
+      "id": "cn.ai_label.explicit.video",
+      "scope": "video",
+      "platforms": [
+        "cn_all",
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin",
+        "xiaohongshu"
+      ],
+      "severity": "error",
+      "title": "AI 生成视频须在起始画面加显著提示标识",
+      "check": {
+        "kind": "ai_marker_video",
+        "params": {
+          "at": "start"
+        }
+      },
+      "fix": "视频起始画面加『AI生成』角标；导出的视频文件内需保留显式标识",
+      "why": "《人工智能生成合成内容标识办法》第四条(四)：视频应在起始画面和播放周边适当位置添加显著提示标识，可在末尾和中间适当位置添加",
+      "source": {
+        "type": "regulation",
+        "title": "人工智能生成合成内容标识办法",
+        "url": "https://www.cac.gov.cn/2025-03/14/c_1743654684782215.htm",
+        "clause": "第四条(四)",
+        "effective": "2025-09-01",
+        "confidence": "high"
+      }
+    },
+    {
+      "id": "cn.ai_label.implicit.metadata",
+      "scope": "file",
+      "platforms": [
+        "cn_all",
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin",
+        "xiaohongshu"
+      ],
+      "severity": "error",
+      "title": "文件元数据必须含隐式标识（生成属性 + 服务提供者 + 内容编号）",
+      "check": {
+        "kind": "metadata_ai_label",
+        "params": {
+          "keys": [
+            "ai",
+            "synthetic",
+            "generated",
+            "xmpp",
+            "description",
+            "comment",
+            "title",
+            "author",
+            "software",
+            "creation_time"
+          ]
+        }
+      },
+      "fix": "导出时写入 PNG tEXt / JPEG COM / MP4 meta，标注『AI生成』+ 工具名 + 内容编号",
+      "why": "《人工智能生成合成内容标识办法》第五条：应在生成合成内容的文件元数据中添加隐式标识，包含生成合成内容属性信息、服务提供者名称或者编码、内容编号等制作要素信息；鼓励添加数字水印",
+      "source": {
+        "type": "regulation",
+        "title": "人工智能生成合成内容标识办法",
+        "url": "https://www.cac.gov.cn/2025-03/14/c_1743654684782215.htm",
+        "clause": "第五条",
+        "effective": "2025-09-01",
+        "confidence": "high"
+      }
+    },
+    {
+      "id": "cn.ai_label.declare_on_publish",
+      "scope": "process",
+      "platforms": [
+        "cn_all",
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin",
+        "xiaohongshu"
+      ],
+      "severity": "warn",
+      "title": "发布时需主动声明并使用平台标识功能",
+      "check": {
+        "kind": "process_checklist",
+        "params": {
+          "items": [
+            "发布前勾选『内容由 AI 生成』声明",
+            "使用平台提供的 AI 标识功能",
+            "不要移除生成工具自带的水印/角标"
+          ]
+        }
+      },
+      "fix": "上架/发布流程里加一道『是否已声明 AI 生成』的确认",
+      "why": "《人工智能生成合成内容标识办法》第六条/第十条：用户发布生成合成内容应当主动声明并使用服务提供者提供的标识功能；平台需核验文件元数据中的隐式标识",
+      "source": {
+        "type": "regulation",
+        "title": "人工智能生成合成内容标识办法",
+        "url": "https://www.cac.gov.cn/2025-03/14/c_1743654684782215.htm",
+        "clause": "第六条/第十条",
+        "effective": "2025-09-01",
+        "confidence": "high"
+      }
+    },
+    {
+      "id": "main.square",
+      "scope": "image",
+      "platforms": [
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin",
+        "amazon"
+      ],
+      "severity": "error",
+      "title": "主图必须为正方形",
+      "check": {
+        "kind": "aspect",
+        "params": {
+          "mode": "square",
+          "tolerance": 0.02
+        }
+      },
+      "fix": "导出时裁成 1:1",
+      "why": "各平台主图通用要求（正方形，避免裁切变形）",
+      "source": {
+        "type": "community",
+        "note": "多平台通用共识，请按自己类目的官方规则核对",
+        "confidence": "medium"
+      }
+    },
+    {
+      "id": "main.min_size",
+      "scope": "image",
+      "platforms": [
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin"
+      ],
+      "severity": "error",
+      "title": "主图最小边长不低于 800px",
+      "check": {
+        "kind": "min_size",
+        "params": {
+          "min_w": 800,
+          "min_h": 800
+        }
+      },
+      "fix": "按目标倍率出图（建议 1600x1600 起步，可覆盖 2 倍图）",
+      "why": "平台对主图清晰度的通用下限；低于会被判模糊/降权",
+      "source": {
+        "type": "community",
+        "note": "通用共识值，各平台/类目可能更高，按官方核对",
+        "confidence": "medium"
+      }
+    },
+    {
+      "id": "main.white_bg",
+      "scope": "image",
+      "platforms": [
+        "pdd",
+        "douyin",
+        "amazon"
+      ],
+      "severity": "error",
+      "title": "白底图必须纯白背景",
+      "check": {
+        "kind": "background_white",
+        "params": {
+          "corner_px": 24,
+          "min_white_ratio": 0.55,
+          "max_saturation": 0.12
+        }
+      },
+      "fix": "用纯白底（#FFFFFF）重出或抠图换底",
+      "why": "白底主图是平台基础要求；非白底会被判『背景不合格』",
+      "source": {
+        "type": "community",
+        "note": "Amazon 明确要求纯白 RGB 255,255,255；拼多多/抖音同理",
+        "confidence": "medium"
+      }
+    },
+    {
+      "id": "main.no_watermark",
+      "scope": "image",
+      "platforms": [
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin",
+        "amazon"
+      ],
+      "severity": "manual",
+      "title": "主图不得含其它平台水印/文字/边框",
+      "check": {
+        "kind": "manual",
+        "params": {
+          "look_for": [
+            "其它平台水印",
+            "促销文字",
+            "拼接边框",
+            "二维码",
+            "联系方式"
+          ]
+        }
+      },
+      "fix": "人工确认：除 AI 标识角标外无其它水印/文字/边框",
+      "why": "含水印/文字/边框会被判『主图违规』；但机器无法可靠识别各家水印，故标为人工",
+      "source": {
+        "type": "community",
+        "confidence": "high"
+      }
+    },
+    {
+      "id": "main.text_ratio",
+      "scope": "image",
+      "platforms": [
+        "taobao",
+        "pdd",
+        "douyin",
+        "amazon"
+      ],
+      "severity": "manual",
+      "title": "主图文字占比受限",
+      "check": {
+        "kind": "manual",
+        "params": {
+          "typical_limit": "文字不超画面 20%，不遮盖主体"
+        }
+      },
+      "fix": "人工确认主图无大段促销文案",
+      "why": "各平台限制主图文字比例/内容；需 OCR，暂列人工",
+      "source": {
+        "type": "community",
+        "confidence": "medium"
+      }
+    },
+    {
+      "id": "main.format",
+      "scope": "image",
+      "platforms": [
+        "cn_all",
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin",
+        "xiaohongshu",
+        "amazon",
+        "shopify"
+      ],
+      "severity": "error",
+      "title": "格式与体积",
+      "check": {
+        "kind": "file",
+        "params": {
+          "formats": [
+            "jpg",
+            "jpeg",
+            "png",
+            "webp"
+          ],
+          "max_bytes": 3145728,
+          "min_bytes": 10240
+        }
+      },
+      "fix": "导出 JPG/PNG，单图 ≤3MB",
+      "why": "平台通用上传限制（常见上限 3MB）；格式须为 jpg/png/webp",
+      "source": {
+        "type": "community",
+        "confidence": "medium"
+      }
+    },
+    {
+      "id": "main.white_ratio_amazon",
+      "scope": "image",
+      "platforms": [
+        "amazon"
+      ],
+      "severity": "manual",
+      "title": "Amazon 主图：商品须占画面 85%",
+      "check": {
+        "kind": "manual",
+        "params": {
+          "typical_limit": "商品占画面约 85%，四周留白"
+        }
+      },
+      "fix": "人工确认主体占比",
+      "why": "Amazon MAIN image 要求商品占画面约 85%",
+      "source": {
+        "type": "community",
+        "confidence": "medium"
+      }
+    },
+    {
+      "id": "main.resolution_tier",
+      "scope": "image",
+      "platforms": [
+        "taobao",
+        "jd",
+        "pdd",
+        "douyin"
+      ],
+      "severity": "warn",
+      "title": "多倍率图缺失",
+      "check": {
+        "kind": "manual",
+        "params": {
+          "typical_tiers": [
+            "1:1 800x800",
+            "1:1 1200x1200",
+            "3:4 / 2:3 长图（详情页）"
+          ]
+        }
+      },
+      "fix": "按平台要求补齐多倍率/长图",
+      "why": "多倍率图可提升搜索加权；缺失只是加权低，不违规",
+      "source": {
+        "type": "community",
+        "confidence": "medium"
+      }
+    }
+  ]
+}

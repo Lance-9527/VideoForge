@@ -471,8 +471,23 @@ def apply_ai_label_corner(image_path: str, out_path: str = "",
             draw.rectangle([x0, y0, x0 + tw, y0 + th], fill=(0, 0, 0, 140))
             draw.text((x0 + 8, y0 + th // 2), text, fill=(255, 255, 255, 255),
                       font=font, anchor="lm")
-            out = out_path or (str(image_path).rsplit(".", 1)[0] + "_labeled.jpg")
-            rgb.save(out, "JPEG", quality=94)
+            # ★ 按**源格式**保存，不能硬编码 JPEG：
+            #   原文件是 PNG 时存成 JPEG 会造成「扩展名是 .png、内容却是 JPEG」，
+            #   平台按后缀校验会直接拒收，扩展名与真实格式不符也让
+            #   后续按后缀读元数据的逻辑全部失效。
+            src_fmt = (im.format or "").upper()
+            if out_path:
+                out = out_path
+            elif src_fmt == "PNG":
+                out = str(image_path).rsplit(".", 1)[0] + "_labeled.png"
+            else:
+                out = str(image_path).rsplit(".", 1)[0] + "_labeled.jpg"
+            if src_fmt == "PNG":
+                rgb.save(out, "PNG")
+            elif src_fmt == "WEBP":
+                rgb.save(out, "WEBP", quality=94)
+            else:
+                rgb.save(out, "JPEG", quality=94)
             return out
     except Exception:
         return None

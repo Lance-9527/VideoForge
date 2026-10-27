@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-27",
+  "version": "2026-10-27+minbytes-fix",
   "note": "商品图/商品视频的**可执行**校验规则集。每条规则都带 check.kind（可跑的校验类型）、severity（error=阻断 / warn=警告 / manual=需人工）、source（出处与可信度）。confidence=low 的规则请按你自己类目的官方规则核对后再当准。",
   "platforms": {
     "taobao": {
@@ -333,7 +333,7 @@
             "webp"
           ],
           "max_bytes": 3145728,
-          "min_bytes": 10240
+          "min_bytes": 1024
         }
       },
       "fix": "导出 JPG/PNG，单图 ≤3MB",

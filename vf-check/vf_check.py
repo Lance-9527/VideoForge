@@ -101,7 +101,8 @@ def _candidate_backends() -> List[Path]:
         if r in seen:
             continue
         seen.add(r)
-        if (r / "commerce_rules.py").is_file():
+        # engine 文件可能在 <dir>/commerce_rules.py，也可能在 <dir>/core/commerce_rules.py
+        if (r / "commerce_rules.py").is_file() or (r / "core" / "commerce_rules.py").is_file():
             out.append(r)
     return out
 
@@ -238,6 +239,169 @@ def render_console(res: Dict[str, Any], show_pass: bool = False) -> None:
     print("=" * W)
 
 
+def render_report_html(res: Dict[str, Any], out_path: Path) -> None:
+    """生成**可直接发微信/浏览器打开**的 HTML 报告（含缩略图 + 红黄绿状态）。
+
+    比 Markdown 报告更适合当成交付物：客户手机上点开就能看图看问题。
+    """
+    import base64
+    import html as _h
+
+    plat = res.get("platform", "")
+    label = PLATFORM_LABEL.get(plat, plat)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    esc = _h.escape
+
+    def thumb(path: str) -> str:
+        """缩略图转 base64 data URI（宽度上限 240px，控制体积）。"""
+        try:
+            from PIL import Image
+            import io as _io
+            with Image.open(path) as im:
+                im = im.convert("RGB")
+                im.thumbnail((240, 240))
+                buf = _io.BytesIO()
+                im.save(buf, "JPEG", quality=72)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+            return f"data:image/jpeg;base64,{b64}"
+        except Exception:
+            return ""
+
+    bad = [i for i in res["items"] if not i["ok"]]
+    okc = len(res["items"]) - len(bad)
+    L: List[str] = []
+    A = L.append
+
+    A("""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>商品图合规巡检报告</title><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0f1115;color:#e8eaed;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;padding:0 0 60px}
+.wrap{max-width:900px;margin:0 auto;padding:0 18px}
+header{padding:34px 0 24px;border-bottom:1px solid #262b36;margin-bottom:26px}
+h1{font-size:23px;letter-spacing:-.01em}
+.meta{color:#9aa3b2;font-size:13.5px;margin-top:8px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:22px 0 30px}
+.stat{background:#171a21;border:1px solid #262b36;border-radius:12px;padding:16px}
+.stat b{display:block;font-size:30px;font-weight:700;letter-spacing:-.02em}
+.stat span{font-size:13px;color:#9aa3b2}
+.r{color:#f87171}.g{color:#4ade80}.y{color:#fbbf24}
+h2{font-size:17px;margin:30px 0 14px;padding-bottom:9px;border-bottom:1px solid #262b36}
+.card{background:#171a21;border:1px solid #262b36;border-radius:12px;padding:16px;margin-bottom:12px}
+.card.bad{border-color:#5a2626}.card.ok{border-color:#1f5133}
+.row{display:flex;gap:14px;align-items:flex-start}
+.thumb{flex:0 0 96px;width:96px;height:96px;border-radius:8px;object-fit:cover;background:#0b0d11;border:1px solid #262b36}
+.name{font-weight:600;font-size:15px;word-break:break-all}
+.sub{color:#8b94a3;font-size:12.5px;margin-top:3px}
+.badge{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;font-weight:600;margin-left:8px}
+.b-r{background:#3b1a1a;color:#fca5a5}.b-g{background:#14321f;color:#86efac}.b-y{background:#3a2f10;color:#fcd34d}
+.iss{margin-top:11px;padding-top:11px;border-top:1px solid #232833}
+.iss div{margin-bottom:7px;font-size:14px}
+.rid{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#7c8698;margin-left:6px}
+.lab{display:inline-block;min-width:42px;font-weight:700}
+.lab.e{color:#f87171}.l.w{color:#fbbf24}.l.m{color:#60a5fa}
+.why{color:#8b94a3;font-size:13px;margin-top:2px}
+.fix{color:#cbd5e1;font-size:13.5px;margin-top:3px;padding-left:10px;border-left:2px solid #3a4354}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:12px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #262b36}
+th{color:#9aa3b2;font-weight:600;font-size:12.5px}
+td.c{text-align:center;width:58px}
+.ok2{color:#4ade80}.no{color:#5b6472}
+.note{background:#1a1710;border-left:3px solid #fbbf24;padding:13px 16px;border-radius:0 10px 10px 0;color:#e3d9bf;font-size:13.5px;margin-top:16px}
+.note.g{background:#101a13;border-color:#4ade80;color:#d5e8da}
+footer{color:#6b7482;font-size:12.5px;margin-top:34px;padding-top:18px;border-top:1px solid #262b36}
+@media(max-width:640px){.stats{grid-template-columns:1fr}.row{flex-direction:column}.thumb{width:100%;height:150px;flex:none}}
+</style></head><body><div class="wrap">""")
+
+    A(f'<header><h1>商品图合规巡检报告</h1>')
+    A(f'<div class="meta">平台：{esc(label)}（{esc(plat)}）　·　检查时间：{esc(now)}　·　文件数：{res["total"]}</div></header>')
+
+    A(f'<div class="stats">')
+    A(f'<div class="stat"><b>{res["total"]}</b><span>检查文件数</span></div>')
+    A(f'<div class="stat"><b class="g">{okc}</b><span>通过</span></div>')
+    A(f'<div class="stat"><b class="r">{len(bad)}</b><span>需整改</span></div>')
+    A('</div>')
+
+    A('<div class="note g">')
+    if bad:
+        A(f'<b>结论：{len(bad)} 个文件存在会被驳回的项</b>，已逐条列出问题、依据与改法。先按"怎么改"处理，处理后可免费复检一次。')
+    else:
+        A('<b>结论：全部通过，可发布。</b>仍有几项需人工确认（机器判不了），见下方"需人工确认"。')
+    A('</div>')
+
+    if bad:
+        A('<h2>一、需整改（会被驳回）</h2>')
+        for it in bad:
+            A('<div class="card bad"><div class="row">')
+            t = thumb(it["path"])
+            if t:
+                A(f'<img class="thumb" src="{t}" alt="">')
+            A('<div style="min-width:0">')
+            A(f'<div class="name">{esc(Path(it["path"]).name)}<span class="badge b-r">需整改</span></div>')
+            pr = it.get("probe") or {}
+            bits = []
+            if pr.get("w"):
+                bits.append(f'{pr.get("w")}×{pr.get("h")}')
+            if pr.get("format"):
+                bits.append(str(pr["format"]))
+            if pr.get("bytes"):
+                bits.append(f'{round(pr["bytes"]/1024)}KB')
+            A(f'<div class="sub">{" · ".join(bits)}</div>')
+            A('</div></div>')
+            A('<div class="iss">')
+            for c in it.get("errors", []):
+                A(f'<div><span class="lab e">✗</span><b>{esc(c.get("title",""))}</b><span class="rid">{esc(c.get("id",""))}</span>')
+                A(f'<div class="why">依据：{esc(c.get("why",""))}</div>')
+                A(f'<div class="fix">怎么改：{esc(c.get("fix",""))}</div></div>')
+            for c in it.get("warnings", []):
+                A(f'<div><span class="lab w">!</span><b>{esc(c.get("title",""))}</b><span class="rid">{esc(c.get("id",""))}</span>')
+                A(f'<div class="fix">建议：{esc(c.get("fix",""))}</div></div>')
+            A('</div></div>')
+
+    # 需人工确认
+    manual_map: Dict[str, Dict[str, Any]] = {}
+    for it in res["items"]:
+        for c in it.get("manual", []):
+            e = manual_map.setdefault(c["id"], {"c": c, "n": 0})
+            e["n"] += 1
+    if manual_map:
+        A('<h2>二、需人工确认（机器判不了，请运营过一眼）</h2>')
+        A('<div class="card">')
+        for cid, e in sorted(manual_map.items(), key=lambda x: -x[1]["n"]):
+            c = e["c"]
+            A(f'<div><span class="lab m">?</span><b>{esc(c.get("title",""))}</b>'
+              f'<span class="rid">{esc(cid)}</span> · {e["n"]} 个文件</div>')
+            A(f'<div class="fix">确认要点：{esc(c.get("fix",""))}</div>')
+        A('</div>')
+
+    if res.get("summary"):
+        A('<h2>三、问题分布</h2>')
+        A('<table><thead><tr><th>次数</th><th>规则</th><th>说明</th><th>怎么改</th></tr></thead><tbody>')
+        for s in res["summary"]:
+            A(f'<tr><td class="c">{s["count"]}</td>'
+              f'<td><span class="rid">{esc(s["id"])}</span></td>'
+              f'<td>{esc(s.get("title",""))}</td>'
+              f'<td style="color:#cbd5e1">{esc(s.get("fix",""))}</td></tr>')
+        A('</tbody></table>')
+
+    A('<h2>四、规则依据</h2><div class="card">')
+    seen = set()
+    for s in res.get("summary") or []:
+        sid = s["id"]
+        if sid in seen:
+            continue
+        seen.add(sid)
+        A(f'<div style="margin-bottom:7px"><span class="rid">{esc(sid)}</span> {esc(s.get("title",""))}'
+          f'<div class="why">{esc(s.get("why",""))}</div></div>')
+    A('</div>')
+
+    A('<footer>本报告由 VideoForge 合规规则引擎自动生成。规则集随平台细则更新，'
+      '最终以平台实际审核结果为准。本报告为合规性判断，不构成法律意见。</footer>')
+    A('</div></body></html>')
+
+    out_path.write_text("\n".join(L), encoding="utf-8")
+
+
 def render_report(res: Dict[str, Any], rule_sources: Dict[str, Dict[str, Any]],
                   out_path: Path) -> None:
     plat = res["platform"]
@@ -369,6 +533,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--fix", action="store_true",
                     help="自动修复可自动处理的问题（补 AI 显式角标 + 文件元数据隐式标识）")
     ap.add_argument("--report", default="", help="额外输出 Markdown 报告到指定路径")
+    ap.add_argument("--html", default="", help="输出 HTML 报告（含缩略图，适合直接发客户）")
     ap.add_argument("--json", action="store_true", help="输出 JSON（机器可读）")
     ap.add_argument("--show-pass", action="store_true", help="同时列出通过的文件")
     ap.add_argument("--init-rules", default="", metavar="DIR",
@@ -494,9 +659,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 mark = "✗" if v["failed"] else "✓"
                 print(f"   {mark} {PLATFORM_LABEL.get(p,p):<10} {v['passed']}/{v['total']} 通过")
 
+    if args.report or args.html:
+        rp_parent = Path(args.report or args.html).parent
+        rp_parent.mkdir(parents=True, exist_ok=True)
+
     if args.report:
         rp = Path(args.report)
-        rp.parent.mkdir(parents=True, exist_ok=True)
         try:
             raw = json.loads(rules_path.read_text(encoding="utf-8"))
             rule_list = raw.get("rules", raw if isinstance(raw, list) else [])
@@ -507,7 +675,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             src = r.get("source") or {}
             sources[r.get("id")] = src
         render_report(res, sources, rp)
-        print(f"\n[vf-check] 报告已生成：{rp}")
+        print(f"\n[vf-check] Markdown 报告已生成：{rp}")
+
+    if args.html:
+        hp = Path(args.html)
+        render_report_html(res, hp)
+        print(f"[vf-check] HTML 报告已生成：{hp}")
 
     return 0 if res["failed"] == 0 else 1
 

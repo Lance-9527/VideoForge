@@ -633,9 +633,14 @@ async def _run_clip_stage(db, pid: str, params: Dict[str, Any], tool: str) -> To
     batch = shots[:max(1, min(limit, 20))]
 
     made, failed = [], []
+    # ★ 2026-10-26：「这一段重出」必须能到工具里，否则 generate_preview 会命中
+    #   `_existing_local_clip` 的复用守卫 ⇒ 点多少次都不重抽（用户实拍：
+    #   台词没说出来，要求重出，结果原样返回旧片）。
+    _carry = {k: params[k] for k in ("again", "acknowledge_risk", "allow_no_reference")
+              if params.get(k) is not None}
     for s in batch:
         try:
-            r = await _dispatch(tool, {"project_id": pid, "shot_id": s.get("id")})
+            r = await _dispatch(tool, {"project_id": pid, "shot_id": s.get("id"), **_carry})
         except Exception as e:  # noqa: BLE001
             r = {"ok": False, "error": f"{type(e).__name__}: {e}"}
         if isinstance(r, dict) and r.get("ok"):
@@ -1298,10 +1303,31 @@ async def _run_previz_stage(db, pid: str, params: Dict[str, Any]) -> ToolResult:
     #   并发度 2：Blender 是 CPU/内存大户，2 路在普通机器上安全，且把 4 镜从 ~3.6 分钟压到 ~1.8 分钟。
     import asyncio as _aio2
 
+    # ★★ 2026-10-26：**MCP 通道必须串行**（实测踩出来的坑）。
+    #
+    #   白膜并发 2 路是为 Blender 设计的（两个 Blender 进程互不干扰）。
+    #   但 openVideoForge 工作台**只有一台相机**：每镜渲染前要先把相机搬到
+    #   这一镜的位置（wb_camera / wb_track_set），紧接着才提交渲染。
+    #   两镜并发 ⇒ A 搬完相机、B 又搬了一次 ⇒ 两次提交拿到的是同一台相机，
+    #   实测两段 mp4 **字节完全相同**（同一画面渲了两遍），"每镜不同机位"彻底失效。
+    #   ⇒ 走 MCP 时并发度必须 = 1；Blender 通道保持 2。
+    _previz_concurrency = 2
+    try:
+        from core import previz_mcp as _mc
+        if _mc.channel() in ("mcp", "auto"):
+            _previz_concurrency = 1
+    except Exception:  # noqa: BLE001
+        pass
+    if params.get("concurrency"):
+        try:
+            _previz_concurrency = max(1, min(4, int(params["concurrency"])))
+        except (TypeError, ValueError):
+            pass
+    logger.info("白膜并发度=%d（MCP 通道必须串行：工作台只有一台相机）", _previz_concurrency)
     made, failed = [], []
     _pdone = {"n": 0}
     _plock = _aio2.Lock()
-    _psem = _aio2.Semaphore(2)
+    _psem = _aio2.Semaphore(_previz_concurrency)
 
     async def _render_one(s: Dict[str, Any]) -> None:
         try:

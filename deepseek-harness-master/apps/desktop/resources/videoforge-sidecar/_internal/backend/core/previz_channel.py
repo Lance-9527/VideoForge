@@ -313,11 +313,24 @@ def bridge_health(bridge: Optional[str] = None, timeout: float = 3.0) -> Dict[st
 
 
 def tool_call(name: str, args: Optional[Dict[str, Any]] = None,
-              bridge: Optional[str] = None, timeout: float = 60.0) -> Dict[str, Any]:
-    """POST /tool {name,args} —— 与 MCP `tools/call` 等价（桥的原文错误原样带回）。"""
+              bridge: Optional[str] = None, timeout: float = 60.0,
+              client: Optional[str] = None) -> Dict[str, Any]:
+    """POST /tool {name,args} —— 与 MCP `tools/call` 等价（桥的原文错误原样带回）。
+
+    ★ 2026-10-26：多页面时桥会按 focus/editor/visible 自己挑一个客户端，可能落到
+    用户开着的**旧标签**上（我们在 App 侧栏里操作时看不出来）。给 `client` 就改走
+    `/cmd` 并且**显式指定**目标页面（`/cmd` 支持 `client` 字段，`dispatch` 会用它）。
+    """
     url = (bridge or bridge_url()).rstrip("/")
     try:
-        out = _http(url + "/tool", {"name": name, "args": args or {}}, timeout)
+        if client:
+            out = _http(url + "/cmd", {
+                "name": name, "args": args or {},
+                "timeoutMs": max(1000, int(float(timeout) * 1000)),
+                "client": client,
+            }, timeout)
+        else:
+            out = _http(url + "/tool", {"name": name, "args": args or {}}, timeout)
     except urllib.error.URLError as e:
         return {"ok": False, "error": "连不上白膜工作台桥 %s（%s）"
                                       % (url, getattr(e, "reason", e))}
@@ -326,6 +339,32 @@ def tool_call(name: str, args: Optional[Dict[str, Any]] = None,
     if not isinstance(out, dict):
         return {"ok": True, "data": out}
     return out
+
+
+def _state_of(bridge: str, client: Optional[str] = None,
+              timeout: float = 15.0) -> Dict[str, Any]:
+    """读某个**指定页面**的状态（client 为空则用桥的默认选择 = 旧行为）。"""
+    if not client:
+        return _state(bridge, timeout)
+    r = tool_call("wb_state", {}, bridge, timeout, client=client)
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("error") or "wb_state 失败", "raw": r}
+    data = r.get("data")
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "wb_state 返回的不是对象：%r" % (data,)}
+    return {"ok": True, "data": data}
+
+
+def _client_ids(bridge: str) -> List[str]:
+    """当前连到桥上的页面 id 列表（`/health.clients`）。
+
+    桥一次可能连多个页面（App 侧栏一个、用户浏览器里的旧标签若干）。
+    `/health` 的 clients 顺序就是连接顺序；多页面时调用方需要显式挑一个目标。
+    """
+    h = bridge_health(bridge)
+    if not h.get("ok"):
+        return []
+    return [str(c) for c in (h.get("clients") or []) if c]
 
 
 def _page_connected(health: Dict[str, Any]) -> bool:
@@ -524,12 +563,82 @@ def _state(bridge: str, timeout: float = 15.0) -> Dict[str, Any]:
     return {"ok": True, "data": data}
 
 
+def _restore_last_scene(url: str, client: Optional[str] = None) -> str:
+    """把工作台「我的场景」里**最近一个**场景重新打开；没有就返回空串。
+
+    为什么需要（2026-10-26 用户实测）：
+        「openVideoForge 数据不是保存在本地吗，后面不要每次打开都是新的没记录的
+         （资产可沉淀）」
+    病根不是"没存"——场景/资产本来就在 localStorage 里（`js/store.js` 持久化）；
+    是**每次进编辑器都无脑 `wb_scene_new`**：页面重开时停在入口视图，这一层就新建
+    一个空场景，用户上次摆好的模型/机位看着就"没了"（其实还在列表里，只是没被打开）。
+
+    这里先 `wb_scene_list` 看本地有哪些场景，再用页面命令 `scene.open` 打开最后
+    一个。桥的工具表里没有 `wb_scene_open`，但 `wb_raw` 能透传页面命令
+    （`js/studio-agent.js` 的 `'scene.open': ({id}) => openEditor({recId:id})`），
+    所以不用改 openVideoForge 的代码。
+
+    @param url 桥地址（如 http://127.0.0.1:8787）
+    @returns 打开成功的 scene id；没有可用场景或失败返回 ""
+    """
+    try:
+        listed = tool_call("wb_scene_list", {}, url, 20, client=client)
+        if not listed.get("ok"):
+            return ""
+        data = listed.get("data")
+        scenes = (data or {}).get("scenes") if isinstance(data, dict) else None
+        if not isinstance(scenes, list) or not scenes:
+            return ""
+        # `scene.list` 按存储顺序返回；取最后一个 = 最近保存的那个。
+        last = scenes[-1]
+        sid = str((last or {}).get("id") or "").strip()
+        if not sid:
+            return ""
+        opened = tool_call("wb_raw", {"cmd": "scene.open", "args": {"id": sid}}, url, 30,
+                           client=client)
+        if opened.get("ok"):
+            _LOG.info("白膜工作台恢复上次场景：%s（本地共 %d 个场景）", sid, len(scenes))
+            return sid
+        _LOG.warning("打开上次场景 %s 失败：%s", sid, opened.get("error"))
+        return ""
+    except Exception as e:  # noqa: BLE001
+        _LOG.warning("恢复上次白膜场景失败（将新建）：%s", e)
+        return ""
+
+
+def save_scene_record(bridge: Optional[str] = None, title: str = "",
+                      client: Optional[str] = None) -> Dict[str, Any]:
+    """把工作台**当前编辑器状态**存成一条本地场景记录（页面命令 `scene.save`）。
+
+    为什么必须有（2026-10-26 用户实测）：
+        场景/资产本来就存在 localStorage（`js/store.js` 的 `whitebox.workbench.v1`），
+        但页面里**只有「保存」才会写记录**：`scene.new` 只开编辑器，不建记录。
+        通道自动新建的场景如果不存一条，下次打开就是空白入口（= 用户说的
+        「每次打开都是新的没记录」）。渲完把场景存成记录，模型/机位/分镜就沉淀下来了。
+
+    @param bridge 桥地址（默认本机 8787）
+    @param title 记录标题；空则用「白膜场景 时间」
+    @returns 桥的原始回执（ok/error）
+    """
+    url = (bridge or bridge_url()).rstrip("/")
+    name = (title or "").strip() or ("白膜场景 " + time.strftime("%Y-%m-%d %H:%M"))
+    return tool_call("wb_raw", {"cmd": "scene.save", "args": {"title": name}}, url, 30,
+                     client=client)
+
+
 def ensure_editor(bridge: Optional[str] = None, *, env: str = "room",
+                  size: Optional[str] = None,
                   wait: Optional[float] = None) -> Dict[str, Any]:
-    """页面不在编辑器 → wb_scene_new；等到 view=='editor'。"""
+    """页面不在编辑器 → **先恢复上次场景**，没有才 `wb_scene_new`；等 view=='editor'。
+
+    ★ 2026-10-26：size = 场地大小档位（small/medium/large）。
+      地图大小是**设置**（`previz_scene_scale`），不是写死的常量；
+      通道新建场景时把档位一起下发，页面按它搭环境。
+    """
     url = (bridge or bridge_url()).rstrip("/")
     out: Dict[str, Any] = {"step": "view", "ok": False, "view": None,
-                           "scene_id": None, "created": False,
+                           "scene_id": None, "created": False, "restored": False,
+                           "restored_scene_id": "",
                            "reason": "", "next_action": ""}
     st = _state(url)
     if not st.get("ok"):
@@ -546,7 +655,42 @@ def ensure_editor(bridge: Optional[str] = None, *, env: str = "room",
         out["step"] = None
         return out
 
-    r = tool_call("wb_scene_new", {"env": env}, url, 30)
+    # ★ 2026-10-26：多页面时先自己挑一个目标页面（桥的默认选择可能落到旧标签）。
+    #   规则：已经有页面在 editor → 直接用；否则挑第一个"非 editor"的（它才需要
+    #   恢复/新建），这样不会去动用户正在看的另一个页面。
+    target: Optional[str] = None
+    clients = _client_ids(url)
+    if len(clients) > 1:
+        pending = ""
+        for cid in clients:
+            s = _state_of(url, cid)
+            if s.get("ok") and s["data"].get("view") == "editor":
+                out.update(view="editor", scene_id=s["data"].get("scene_id"),
+                           ok=True, step=None)
+                return out
+            if not pending and s.get("ok"):
+                pending = cid
+        target = pending or clients[0]
+
+    # ★ 2026-10-26（用户实测：不要每次都是新的没记录）：
+    #   先恢复本地「我的场景」里最近的一个；场景/资产本来就在 localStorage，
+    #   只要把上次那个重新打开，模型、机位、分镜就都回来了。
+    restored_id = _restore_last_scene(url, target)
+    out["restored_scene_id"] = restored_id
+    if restored_id:
+        deadline = time.time() + (wait or EDITOR_WAIT_TIMEOUT)
+        while time.time() < deadline:
+            _sleep(0.4)
+            st = _state_of(url, target)
+            if st.get("ok") and st["data"].get("view") == "editor":
+                out.update(view="editor",
+                           scene_id=st["data"].get("scene_id") or restored_id,
+                           ok=True, step=None, restored=True)
+                return out
+        _LOG.warning("恢复场景 %s 后仍不在编辑器视图，改为新建", restored_id)
+
+    r = tool_call("wb_scene_new", {"env": env, **({"size": size} if size else {})},
+                  url, 30, client=target)
     out["created"] = bool(r.get("ok"))
     if not r.get("ok"):
         out["reason"] = "页面停在「%s」视图，且自动新建场景失败：%s" % (
@@ -557,10 +701,20 @@ def ensure_editor(bridge: Optional[str] = None, *, env: str = "room",
     deadline = time.time() + (wait or EDITOR_WAIT_TIMEOUT)
     while time.time() < deadline:
         _sleep(0.4)
-        st = _state(url)
+        st = _state_of(url, target)
         if st.get("ok") and st["data"].get("view") == "editor":
             out["view"] = "editor"
             out["scene_id"] = st["data"].get("scene_id")
+            # ★ 2026-10-26：新建的场景**立刻存一条记录**（scene.save → localStorage），
+            #   否则下次打开列表里没有它，又变成"新的没记录"。
+            try:
+                saved = save_scene_record(url, client=target)
+                out["saved"] = bool(saved.get("ok"))
+                _data = saved.get("data")
+                out["saved_scene_title"] = (_data.get("title")
+                                            if isinstance(_data, dict) else "") or ""
+            except Exception as _e:  # noqa: BLE001
+                _LOG.warning("新建白膜场景后存记录失败（不影响渲染）：%s", _e)
             out.update(ok=True, step=None)
             _LOG.info("白膜工作台已自动进入编辑器视图")
             return out
@@ -667,7 +821,8 @@ def _fail(out: Dict[str, Any], started_at: float, step: str,
 
 def ensure_ready(bridge: Optional[str] = None, *, page: Optional[str] = None,
                  vf: Optional[str] = None, open_browser: Optional[bool] = None,
-                 allow_start: Optional[bool] = None) -> Dict[str, Any]:
+                 allow_start: Optional[bool] = None,
+                 size: Optional[str] = None) -> Dict[str, Any]:
     """把「桥 → 页面 → 编辑器 → 场景 → 渲染服务」五层按顺序拉到可用。
 
     Returns:
@@ -710,13 +865,20 @@ def ensure_ready(bridge: Optional[str] = None, *, page: Optional[str] = None,
                      rp.get("reason") or "页面没连上桥",
                      rp.get("next_action") or "")
 
-    re_ = ensure_editor(url)
+    re_ = ensure_editor(url, size=size)
     out["steps"].append({"step": "view", "ok": bool(re_.get("ok")),
                          "detail": ("view=%s" % re_.get("view")) if re_.get("ok") else re_.get("reason")})
     out["view"] = re_.get("view")
     out["scene_id"] = re_.get("scene_id")
     if re_.get("created") and re_.get("ok"):
-        out["actions"].append("已自动新建场景并进入编辑器（env=room）")
+        out["actions"].append("已自动新建场景并进入编辑器（env=room%s）"
+                              % ("，场地大小=%s" % size if size else ""))
+    if re_.get("saved") and re_.get("ok"):
+        out["actions"].append("已把新场景存成记录「%s」（下次打开会自动恢复）"
+                              % (re_.get("saved_scene_title") or "白膜场景"))
+    if re_.get("restored") and re_.get("ok"):
+        out["actions"].append("已恢复上次工作台场景（scene_id=%s），没有覆盖你的模型/机位"
+                              % (re_.get("scene_id") or re_.get("restored_scene_id")))
     if not re_.get("ok"):
         return _fail(out, started_at, re_.get("step") or "view",
                      re_.get("reason") or "页面不在编辑器",

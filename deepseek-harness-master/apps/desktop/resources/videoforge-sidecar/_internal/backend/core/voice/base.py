@@ -42,6 +42,10 @@ class TTSRequest:
     pitch_semitones: float = 0.0             # 音高偏移（半音，供支持的引擎用）
     emotion: str = ""                        # 情绪标签（供支持 emotion 的引擎用）
     style: str = ""                          # 风格标签（mstts:express-as 一类）
+    # ★ 语气提示词（2026-10-26）：「【情绪标签】【发声方式：语速/气息/音调描述】」
+    #   的自由文本。**只有支持自由文本的引擎才用得上**；不支持的引擎只吃上面那三个
+    #   数值旋钮（韵律规划已经把描述翻译成了数值，见 core/prosody.py）。
+    tone_prompt: str = ""
 
 
 @dataclass

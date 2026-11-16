@@ -486,6 +486,12 @@ class SettingsUpdate(BaseModel):
     public_sync_dir: Optional[str] = None     # 上面那个地址对应的本地根目录
     tunnel_named: Optional[str] = None        # 命名隧道名字（长期方案，推荐）
     tunnel_hostname: Optional[str] = None     # 命名隧道对应的固定域名
+    # ★ 白膜场地大小档位（2026-10-26，用户：「地图大小可以再拓一下，可以大一些，
+    #   装得下一个好莱坞；如果需要小场景，设置就行」）。
+    #   small / medium / large —— 不设 = small（= 今天的行为）。
+    #   ★ 必须列在这里：SettingsUpdate 是白名单，没列的字段前端存不进去
+    #   （界面提示"保存成功"，实际被 FastAPI 静默丢掉 —— 这个坑踩过三次）。
+    previz_scene_scale: Optional[str] = None
     # ★ 单镜时长上限（**花费保护**，不是硬限制）。
     #   ★★ 2026-09-29 修正：这里原本写着「用户明确要求过『最多 5 秒』」，
     #   而后端就把 5 当成了**默认值** —— 后果是实测事故：

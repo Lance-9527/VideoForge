@@ -1021,6 +1021,88 @@ async def t_review_previz(args: Dict[str, Any]) -> ToolResult:
 # ──────────────────────── 3. 草稿样片（便宜，G2）────────────────────────
 
 
+async def _dub_clip_now(db, shot: Dict[str, Any], clip_path: str) -> Dict[str, Any]:
+    """给**刚生成出来的片段**配上人物台词（生成过程内完成，不是后期再配）。
+
+    ★ 为什么必须有这一步（2026-10-26 用户原话）：
+      "你本可以把人物台词通过生成过程中全搞定的，但是你肯定是没写好，
+       这块再改进下，人物台词配音尽量不要后期再配！"
+      以前 480P 走的是"让视频模型自己说话"，音色不跟角色卡走、情绪不听提示词；
+      而整片配音（`dub_project`）又排在**最后**——用户听到成片才有台词，
+      小样阶段根本听不到人声，也就无从判断"这版台词对不对、情绪对不对"。
+
+    这里做的事（全部用现成的老零件，不新造轮子）：
+      ① 按**整片选角表**选音色（同一个人从头到尾同一把嗓子）；
+      ② 逐句算韵律（情绪 + 角色基线 + 语气提示词）→ 合成音轨；
+      ③ 把音轨**挂回这一镜**（`_mux_clip_audio`）→ 登记成 `source="voiced"` 的候选。
+
+    ★ 铁律：**配音失败绝不能弄丢已经生成好的片段**。
+      失败时返回 ok=False + 原因，调用方保留原片并如实上报 —— 不假装成功。
+    """
+    out: Dict[str, Any] = {"ok": False, "path": "", "error": "", "warnings": []}
+    if not (clip_path and os.path.exists(clip_path)):
+        out["error"] = "片段文件不在本地，没法配音"
+        return out
+    try:
+        from core import voicecast as _vc
+        from core import compose as _cmp
+        from core.shot_prompts import stored_prompts as _stored
+
+        pid = str(shot.get("project_id") or "")
+        chars = list(db.list_characters(pid) or [])
+        settings = dict(db.get_all_settings() or {})
+        default_voice = str(settings.get("default_voice") or "edge:zh-CN-XiaoxiaoNeural")
+        try:
+            cast = _vc.cast_plan(chars, default_voice) or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("选角失败（用默认音色）：%s", e)
+            cast = {}
+        # 语气提示词：这一镜的 audio_prompt（用户写的【情绪标签】【发声方式…】）。
+        prompts = _stored(shot) or {}
+        tone_prompt = str(prompts.get("audio_prompt") or "")
+        duration = float(shot.get("duration_seconds") or 0.0) or 0.0
+        out_dir = os.path.join(os.path.dirname(clip_path), "voice")
+        dub = await _vc.dub_shot(
+            shot, characters=chars, settings=settings, out_dir=out_dir,
+            default_voice=default_voice, duration=duration or None,
+            cast=cast.get("voices"), tone_prompt=tone_prompt)
+        out["warnings"] = list(dub.get("warnings") or [])
+        out["line_count"] = dub.get("line_count")
+        if not (dub.get("ok") and dub.get("path")):
+            out["error"] = str(dub.get("error") or "这一镜的台词没配出来")
+            return out
+        voiced = clip_path[:-4] + "_voiced.mp4" if clip_path.lower().endswith(".mp4") \
+            else clip_path + "_voiced.mp4"
+        # ★ `_mux_clip_audio` 返回的是**布尔**（成功/失败），产物就是 `voiced` 那个路径。
+        muxed = await _cmp._mux_clip_audio(clip_path, dub["path"], voiced,
+                                            float(dub.get("duration") or duration or 0.0))
+        if not muxed or not os.path.exists(voiced):
+            out["error"] = "音轨没能挂进片段（ffmpeg 失败）"
+            return out
+        # 登记成候选：沿用既有约定 source="voiced"（后期整片配音就是认这个）。
+        try:
+            from core.dubbing import _register_voiced_candidate
+            cid = _register_voiced_candidate(
+                db, shot, str(voiced),
+                float(dub.get("duration") or duration or 0.0))
+            out["candidate_id"] = cid
+        except Exception as e:  # noqa: BLE001
+            logger.warning("配音片段登记候选失败（片段本身已生成）：%s", e)
+        out["ok"] = True
+        out["path"] = str(voiced)
+        try:
+            from urllib.parse import quote as _q
+            out["url"] = "/api/media?path=" + _q(str(voiced))
+        except Exception:  # noqa: BLE001
+            out["url"] = ""
+        out["tone_prompt"] = tone_prompt
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning("480P 现场配音失败（保留原片）：%s", e)
+        out["error"] = f"{type(e).__name__}: {e}"
+        return out
+
+
 async def _persist_clip(db, pid: str, shot_id: str, video_url: str,
                          *, source: str = "", task_id: str = "") -> Dict[str, Any]:
     """把生成好的视频**下载到本地**并写回分镜（第 69 轮，堵住两个真 bug；
@@ -1305,21 +1387,6 @@ async def _revalidate_existing_reference(db, shot, settings, path):
     return verdict
 
 
-@REGISTRY.register(
-    "generate_preview",
-    "出 480P 草稿样片（Seedance/即梦的 Draft 模式）。比成片便宜得多 ——"
-    "官方数据：抽卡 4 次命中省 57%，20 次命中省 77%。"
-    "确认画风/表演没问题之后，再用同一个草稿出 1080P 成片（generate_final）。"
-    "★ 前提：该镜头的白膜必须已确认。",
-    {"shot_id": {"type": "string", "desc": "分镜 id", "required": True},
-     "again": {"type": "boolean", "desc": "true=再抽一版样片（上一版不满意）"},
-     "acknowledge_risk": {"type": "boolean",
-                          "desc": "内容预检判定高风险时，用户明确同意才传 true"},
-     "allow_no_reference": {"type": "boolean",
-                            "desc": "明知模型收不了参考图仍要出（出来的人/景是模型自己编的）。"
-                                    "默认 false = **拦住、不花这笔钱**"}},
-    writes=True,
-)
 def _previz_first_frame(shot: Dict[str, Any]) -> str:
     """找这一镜白膜的第一帧（预演过的起始构图）。找不到返回空串。
 
@@ -1366,6 +1433,21 @@ def _shot_has_dialogue(shot: Dict[str, Any]) -> bool:
     return False
 
 
+@REGISTRY.register(
+    "generate_preview",
+    "出 480P 草稿样片（Seedance/即梦的 Draft 模式）。比成片便宜得多 ——"
+    "官方数据：抽卡 4 次命中省 57%，20 次命中省 77%。"
+    "确认画风/表演没问题之后，再用同一个草稿出 1080P 成片（generate_final）。"
+    "★ 前提：该镜头的白膜必须已确认。",
+    {"shot_id": {"type": "string", "desc": "分镜 id", "required": True},
+     "again": {"type": "boolean", "desc": "true=再抽一版样片（上一版不满意）"},
+     "acknowledge_risk": {"type": "boolean",
+                          "desc": "内容预检判定高风险时，用户明确同意才传 true"},
+     "allow_no_reference": {"type": "boolean",
+                            "desc": "明知模型收不了参考图仍要出（出来的人/景是模型自己编的）。"
+                                    "默认 false = **拦住、不花这笔钱**"}},
+    writes=True,
+)
 async def t_generate_preview(args: Dict[str, Any]) -> ToolResult:
     bad = _need(args, "shot_id")
     if bad:
@@ -1556,9 +1638,16 @@ async def t_generate_preview(args: Dict[str, Any]) -> ToolResult:
             #   现在兜底：没有接龙首帧时，用**白膜首帧**当 first_frame，
             #   让成片的构图/走位/机位跟白膜一致（用户看到的就是预演过的那个调度）。
             first_frame=(_chain_ref or _previz_first_frame(shot) or None),
-            # ★ 2026-10-23：有台词就让**视频模型自己说话**（音画同源、口型自然），
-            #   不再依赖出片后的 TTS 配音（用户："台词要在 480p 视频里出现"）。
-            with_audio=_shot_has_dialogue(shot),
+            # ★ 2026-10-26（用户："人物台词配音尽量不要后期再配！"）：
+            #   以前这里是"让**视频模型自己说话**"（with_audio=True）—— 那不是 TTS：
+            #   ① 音色**不跟角色卡走**（同一个角色在别的镜里可能换嗓子）；
+            #   ② 情绪**不听提示词**（用户写的那套【情绪标签】【发声方式…】形同虚设）；
+            #   ③ 各平台行为不一致（有的通道根本没有这个参数）。
+            #   现在改成：出片落地后**立刻**按角色卡选角 + 逐句韵律配好音轨挂回这一镜
+            #   （见下面的 `_dub_clip_now`）—— 480P 小样里就有台词、有情绪。
+            #   所以这里**不让模型自己发声**（两条音轨会撞车：`_mux_clip_audio`
+            #   是**整轨替换**不是混音）。
+            with_audio=False,
             # ★ 通道没有 Draft 档时（token6688 网关）传 False：
             #   走普通 480p 生成，不假装是草稿档。
             draft=_draft_native,
@@ -1663,6 +1752,17 @@ async def t_generate_preview(args: Dict[str, Any]) -> ToolResult:
             return err(f"样片生成成功但**没能存下来**：{saved.get('error')}。"
                        f"（视频在平台上，链接 24 小时内有效，你可以先点开看："
                        f"{str(res.video_url or '')[:200]}）", shot_id=shot["id"])
+        # ★★ 480P 就要有人声（2026-10-26 用户原话："人物台词配音尽量不要后期再配！"）。
+        #   片段落地后**立刻**配好台词并挂回这一镜 ⇒ 小样里就能听到人物说话，
+        #   情绪/音色都按角色卡与语气提示词来（不是等到成片才配）。
+        #   配音失败**绝不能**把已经生成好的片段弄丢：保留原片，如实说明。
+        _voice: Dict[str, Any] = {}
+        if _shot_has_dialogue(shot):
+            _voice = await _dub_clip_now(db, shot, str(saved.get("path") or ""))
+            if _voice.get("ok") and _voice.get("path"):
+                saved = dict(saved)
+                saved["path"] = _voice["path"]
+                saved["url"] = _voice.get("url") or saved.get("url")
         return ok(
             shot_id=shot["id"],
             path=saved.get("path"),
@@ -1679,6 +1779,7 @@ async def t_generate_preview(args: Dict[str, Any]) -> ToolResult:
             used_reference_images=not _ref_dropped,
             degrade_warning=_degrade_warning,
             previz=previz_info,
+            voice=_voice,
             note=("样片已存到本地并写回这个镜头 ✓（合成时直接用它，"
                   "重跑也不会重复花钱）。" if really_draft else
                   ("片段已存到本地并写回这个镜头 ✓（" + _draft_as + "）。"

@@ -319,15 +319,26 @@ class StudioService:
         return shot
 
     def submit(self,raw: Any,project_id: str | None = None,shot_id: str | None = None,
-               idempotency_key: str | None = None) -> dict[str,Any]:
+               idempotency_key: str | None = None,
+               studio: dict[str, Any] | None = None) -> dict[str,Any]:
         if bool(project_id)!=bool(shot_id):raise _error(422,"绑定目标需同时提供project_id与shot_id")
         if project_id:self._target(project_id,shot_id)
+        # ★ 2026-10-31：电商棚拍参数。preset ∈ white_seamless(白底电商图)/warm_wood(暖木桌面)
+        #   /living_room(家居角落)/black_mirror(黑镜展台)/color_studio(彩棚·真色彩)，
+        #   engine=cycles|eevee，samples 采样数，product_material=keep|ceramic|metal|glass|plastic。
+        if studio is not None:
+            if not isinstance(studio,dict):raise _error(422,"studio 必须是对象")
+            _preset=str(studio.get("preset") or "")
+            if _preset and _preset not in ("white_seamless","warm_wood","living_room","black_mirror","color_studio"):
+                raise _error(422,f"未知的棚预设：{_preset}")
+            studio=dict(studio);studio["preset"]=_preset or "white_seamless"
+            studio.setdefault("engine","cycles");studio.setdefault("samples",128)
         if not self.blender or not Path(self.blender).is_file():raise _error(503,"未找到Blender，请配置VIDEOFORGE_BLENDER")
         if not self.ffmpeg or not self.ffprobe:raise _error(503,"未找到ffmpeg/ffprobe")
         if not self.renderer.exists():raise _error(503,"缺少固定场景渲染器")
         scene=self.save_scene(raw)
         if idempotency_key is not None:idempotency_key=_identifier(idempotency_key)
-        request_hash=hashlib.sha256(json.dumps({"scene":scene,"project_id":project_id,"shot_id":shot_id},
+        request_hash=hashlib.sha256(json.dumps({"scene":scene,"project_id":project_id,"shot_id":shot_id,"studio":studio},
                                               sort_keys=True,separators=(",",":")).encode()).hexdigest()
         with self.lock:
             if idempotency_key is not None:
@@ -346,7 +357,9 @@ class StudioService:
                 if _hash(path)!=meta["sha256"]:raise _error(409,"受管资产校验失败，请重新登记")
                 resolved[asset["id"]]=str(path)
             _json(folder/"scene.json",scene)
-            _json(folder/"input.json",{"scene":scene,"resolved_assets":resolved})
+            # ★ 2026-10-31：电商棚拍参数（studio）随渲染请求一起下发给 Blender。
+            #   spec["studio"] 有值 ⇒ 渲染器切 Cycles + 保留材质 + 建棚布光（见 render_scene.py）。
+            _json(folder/"input.json",{"scene":scene,"resolved_assets":resolved,"studio":studio})
             job={"job_id":job_id,"status":"queued","progress":0,"created_at":time.time(),
                  "scene_id":scene["scene_id"],"scene_revision":scene["revision"],"project_id":project_id,"shot_id":shot_id,
                  "idempotency_key":idempotency_key,"request_sha256":request_hash}
@@ -544,7 +557,10 @@ def create_studio_router(db: Any) -> APIRouter:
     def scene(scene_id: str,revision: int | None = None):return _ok({"scene":service.scene(scene_id,revision)})
 
     @router.post("/renders")
-    def render(body: dict[str,Any]):return _ok(service.submit(body.get("scene"),body.get("project_id"),body.get("shot_id"),body.get("idempotency_key")))
+    def render(body: dict[str,Any]):
+        # ★ 2026-10-31：body 可带 studio（电商棚拍参数），透传给渲染器。
+        return _ok(service.submit(body.get("scene"),body.get("project_id"),body.get("shot_id"),
+                                  body.get("idempotency_key"),body.get("studio")))
 
     @router.get("/renders/{job_id}")
     def job(job_id: str):return _ok(service.get(job_id))

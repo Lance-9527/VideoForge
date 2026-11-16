@@ -190,7 +190,21 @@ def normalize_dialogue(raw: Any, fallback_character: str = "") -> Optional[Dict[
         if v and str(v).strip():
             emo = str(v).strip()
             break
-    return {"character": char or fallback_character, "text": text, "emotion": emo}
+    # ★ 语气提示词（2026-10-26）：用户给的是「【情绪标签】【发声方式…】台词内容」
+    #   这种自由文本。剧本 schema 里本来就有 `delivery`（表演提示），但它**一路被丢掉**
+    #   —— 丢掉就等于没写。这里原样带出来，配音时交给 core/tone_prompt.py 解析。
+    tone = ""
+    for k in ("tone_prompt", "delivery", "performance_note", "表演提示"):
+        v = raw.get(k)
+        if v and str(v).strip():
+            tone = str(v).strip()
+            break
+    out = {"character": char or fallback_character, "text": text, "emotion": emo}
+    if tone:
+        # 只有真有语气提示词时才加这个键 —— 免得把既有数据的形状改掉
+        # （下游在做 dict 相等比较的地方会因此"看起来不一样"）。
+        out["tone"] = tone
+    return out
 
 
 # ★ 重建时间片时要**原样保留**的额外字段。
@@ -378,6 +392,8 @@ def timeline_lines(timeline: Any, duration: float = 0.0) -> List[Dict[str, Any]]
             "overflow": need > span * OVERFLOW_TOLERANCE,
             "speed": round(max(0.25, min(4.0, need / span)), 3) if span else 1.0,
             "camera": it.get("camera") or "", "action": it.get("action") or "",
+            # ★ 语气提示词（2026-10-26）：跟着这句走，配音时才知道怎么念。
+            "tone": d.get("tone") or "",
         })
     return out
 

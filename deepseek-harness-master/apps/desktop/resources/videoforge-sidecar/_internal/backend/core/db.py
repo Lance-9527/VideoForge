@@ -222,10 +222,31 @@ class Database:
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
+        # 无限画布节点（2026-10-31）
+        # 画布是**视图**：节点引用 shots/characters/scenes 的真实对象，
+        # 位置与连线只存在这张表里 ⇒ 唯一真源仍是 projects/shots/... 这些表。
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS canvas_nodes (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL DEFAULT 'shot',
+          ref_type TEXT DEFAULT '',
+          ref_id TEXT DEFAULT '',
+          title TEXT DEFAULT '',
+          x REAL NOT NULL DEFAULT 0,
+          y REAL NOT NULL DEFAULT 0,
+          w REAL NOT NULL DEFAULT 240,
+          h REAL NOT NULL DEFAULT 160,
+          z INTEGER NOT NULL DEFAULT 0,
+          meta JSON DEFAULT '{}',
+          edges JSON DEFAULT '[]',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
         # 抽象化日志
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS abstraction_logs (
-          id TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS abstraction_logs (          id TEXT PRIMARY KEY,
           project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
           source_description TEXT,
           abstracted_description JSON,
@@ -835,6 +856,67 @@ class Database:
             (project_id,),
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
+
+    # ── 无限画布（2026-10-31）────────────────────────────────────────────
+    def list_canvas_nodes(self, project_id: str) -> List[Dict[str, Any]]:
+        """画布上的全部节点（按 z、再按创建时间排）。"""
+        rows = self._execute(
+            "SELECT * FROM canvas_nodes WHERE project_id = ? ORDER BY z, created_at",
+            (project_id,),
+        ).fetchall()
+        return [self._row_to_dict(r) for r in rows]
+
+    def upsert_canvas_node(self, project_id: str, node: Dict[str, Any]) -> Dict[str, Any]:
+        """按 id 新建或更新一个画布节点；缺 id 时生成一个。"""
+        nid = str(node.get("id") or "").strip() or f"cn_{new_id()}"
+        now = datetime.now().isoformat()
+        meta = node.get("meta")
+        edges = node.get("edges")
+        values = (
+            nid,
+            project_id,
+            str(node.get("kind") or "shot"),
+            str(node.get("ref_type") or ""),
+            str(node.get("ref_id") or ""),
+            str(node.get("title") or ""),
+            float(node.get("x") or 0),
+            float(node.get("y") or 0),
+            float(node.get("w") or 240),
+            float(node.get("h") or 160),
+            int(node.get("z") or 0),
+            json.dumps(meta if isinstance(meta, dict) else {}, ensure_ascii=False),
+            json.dumps(edges if isinstance(edges, list) else [], ensure_ascii=False),
+        )
+        self._execute(
+            """
+            INSERT INTO canvas_nodes
+              (id, project_id, kind, ref_type, ref_id, title, x, y, w, h, z, meta, edges,
+               created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              kind=excluded.kind, ref_type=excluded.ref_type, ref_id=excluded.ref_id,
+              title=excluded.title, x=excluded.x, y=excluded.y, w=excluded.w, h=excluded.h,
+              z=excluded.z, meta=excluded.meta, edges=excluded.edges,
+              updated_at=excluded.updated_at
+            """,
+            values + (now, now),
+        )
+        return self.get_canvas_node(nid) or {}
+
+    def get_canvas_node(self, nid: str) -> Optional[Dict[str, Any]]:
+        row = self._execute("SELECT * FROM canvas_nodes WHERE id = ?", (nid,)).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def delete_canvas_node(self, nid: str) -> bool:
+        cur = self._execute("DELETE FROM canvas_nodes WHERE id = ?", (nid,))
+        return cur.rowcount > 0
+
+    def replace_canvas_nodes(self, project_id: str, nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """整张画布覆盖保存：先清掉该项目旧节点，再写新的（拖拽后一次性提交）。"""
+        self._execute("DELETE FROM canvas_nodes WHERE project_id = ?", (project_id,))
+        for node in nodes:
+            self.upsert_canvas_node(project_id, node)
+        return self.list_canvas_nodes(project_id)
 
     def update_shot(self, sid: str, **kwargs) -> Optional[Dict[str, Any]]:
         if not kwargs:

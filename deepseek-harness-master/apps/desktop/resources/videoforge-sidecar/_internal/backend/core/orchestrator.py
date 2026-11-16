@@ -428,6 +428,49 @@ async def abstract_handler(payload: Dict[str, Any],
 
 # ──────────── 工具函数 ────────────
 
+def _dialogue_lines_block(shot: Dict[str, Any]) -> str:
+    r"""把这一镜的**台词原文**按时间顺序拼成一段，喂给视频模型照着说。
+
+    ★★ 2026-10-26（用户实拍：「人物对白没说出来，少了很多东西」）：
+      查下来是**提示词里从来没有台词原文** —— 剧本里有三句台词、
+      `layer2_timeline[].dialogue` 也有，但拼进 prompt 的只有
+      "三句台词的气声质感与语气克制"这种**要求**，模型不知道该说什么，
+      于是只出画面不出声。台词必须**逐字**出现在提示词里，带时间点。
+    """
+    rows: List[tuple] = []
+    tl = shot.get("layer2_timeline")
+    if isinstance(tl, str):
+        try:
+            tl = json.loads(tl or "[]")
+        except Exception:  # noqa: BLE001
+            tl = []
+    for item in (tl or []):
+        if not isinstance(item, dict):
+            continue
+        dg = item.get("dialogue")
+        items = dg if isinstance(dg, list) else ([dg] if isinstance(dg, dict) else [])
+        for d in items:
+            if not isinstance(d, dict):
+                continue
+            text = str(d.get("text") or "").strip()
+            if not text:
+                continue
+            st, en = item.get("start"), item.get("end")
+            rng = ""
+            if isinstance(st, (int, float)) and isinstance(en, (int, float)):
+                rng = "%.1f–%.1f秒" % (st, en)
+            emo = str(d.get("emotion") or "").strip()
+            rows.append((rng, text, emo))
+    if not rows:
+        return ""
+    out = ["\n【台词】人物在现场用中文把下面几句**按顺序说出来**（口型、气口、语气都要对上；"
+           "不要改成画外旁白，不要省略，不要把台词念成字幕文字）："]
+    for rng, text, emo in rows:
+        out.append("· %s「%s」%s" % (rng + " " if rng else "", text,
+                                     ("（%s）" % emo) if emo else ""))
+    return "\n".join(out)
+
+
 def _compose_full_prompt(shot: Dict[str, Any]) -> str:
     """把三层提示词拼装成一段完整 prompt。
 
@@ -452,7 +495,8 @@ def _compose_full_prompt(shot: Dict[str, Any]) -> str:
             _scene = str(_stored.get("scene_anchor") or "").strip()
             if _scene and _scene not in _video:
                 _video = _video + "　" + _scene + "。"
-            return _video
+            # ★ 2026-10-26：台词原文必须补进来（分镜阶段编译的 prompt 里没有台词）
+            return _video + _dialogue_lines_block(shot)
     except Exception:  # noqa: BLE001
         pass
 
@@ -588,6 +632,11 @@ def _compose_full_prompt(shot: Dict[str, Any]) -> str:
             parts.append("必须出现: " + "、".join(constraints["must_appear"]))
         if constraints.get("must_happen"):
             parts.append("必须发生: " + "、".join(constraints["must_happen"]))
+
+    # ★ 2026-10-26：台词原文（两条提示词路径都要带，否则模型不知道说什么）
+    _dlg = _dialogue_lines_block(shot)
+    if _dlg:
+        parts.append(_dlg)
 
     return "\n".join(parts)
 

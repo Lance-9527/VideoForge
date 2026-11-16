@@ -1245,6 +1245,7 @@ async def synthesize_line(
     *, target_span: float = 0.0, emotion: str = "", action: str = "",
     character: Optional[Dict[str, Any]] = None, gender: str = "",
     prosody: Optional[Dict[str, Any]] = None,
+    tone_prompt: str = "",
 ) -> Dict[str, Any]:
     """合成一句台词：**按情绪演**，再按时间片长度做**温和**变速。
 
@@ -1267,6 +1268,19 @@ async def synthesize_line(
     t = _clean_for_tts(text)
     if not t:
         return {"ok": False, "error": "空文本"}
+    # ★ 语气提示词（2026-10-26）：如果这句文本自己以「【…】」开头，
+    #   那是**提示词**不是台词 —— 绝不能被念出来。先切开，再合成。
+    tone_text = str(tone_prompt or "")
+    try:
+        from core.tone_prompt import split_tone_prompt as _split_tone
+        spoken, tone_from_text = _split_tone(t)
+        if tone_from_text:
+            t = spoken
+            tone_text = tone_text or tone_from_text
+    except Exception as e:  # noqa: BLE001
+        logger.warning("语气提示词切分失败（按原样朗读）：%s", e)
+    if not t:
+        return {"ok": False, "error": "只有语气提示词、没有台词"}
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
     from core.voice.base import TTSRequest
@@ -1277,7 +1291,8 @@ async def synthesize_line(
     if not pr:
         try:
             from core.prosody import plan_prosody
-            pr = plan_prosody(emotion, t, action, character, gender=gender)
+            pr = plan_prosody(emotion, t, action, character, gender=gender,
+                              tone_prompt=tone_text)
         except Exception as e:
             logger.warning("韵律规划失败（按中性朗读）：%s", e)
             pr = {}
@@ -1289,7 +1304,9 @@ async def synthesize_line(
                    volume=float(pr.get("volume") or 1.0),
                    pitch_hz=float(pr.get("pitch_hz") or 0.0),
                    pitch_semitones=float(pr.get("pitch_st") or 0.0),
-                   emotion=str(pr.get("emotion") or "")), settings)
+                   emotion=str(pr.get("emotion") or ""),
+                   tone_prompt=tone_text),
+                  settings)
     if not r.success or not os.path.exists(out_path):
         # ★ 记下"这把嗓子发不出声" —— 下次选角就不会再选它。
         try:
@@ -1496,6 +1513,7 @@ async def dub_shot(
     scene_name: str = "",
     shot_order: Optional[int] = None,
     character_names: Optional[List[str]] = None,
+    tone_prompt: str = "",
 ) -> Dict[str, Any]:
     """把一个分镜按台词时间轴配音，返回音轨 + 逐句字幕。
 
@@ -1508,6 +1526,10 @@ async def dub_shot(
       ② 音色从**整片选角表**来（旧代码按分镜挑，"同一个角色"会换嗓子）；
       ③ 每句带**气口**：台词前留吸气/决定开口的短停顿、台词后留静默尾拍 ——
          这是"说话节奏"能被听出来的地方（参考 dialogue-audio.md 的对白锁）。
+
+    ★ 2026-10-26 新增 `tone_prompt`：这一镜（或这一句）自带的
+      「【情绪标签】【发声方式…】」语气提示词。优先用**每句自己带的**，
+      没有才用这一镜的。解析在 `core/tone_prompt.py`。
     """
     os.makedirs(out_dir, exist_ok=True)
     dur = float(duration or shot.get("duration_seconds") or 5.0)
@@ -1662,10 +1684,14 @@ async def dub_shot(
         #   于是起点被 lead 往后推、结尾却没人为它让路 —— 实测有 3 句把尾巴
         #   压到下一句的起点上（56/97/283ms），听起来就是两个人抢话。
         _pr = {}
+        # ★ 语气提示词（2026-10-26）：优先用**这一句自己带的**（分镜里的
+        #   【情绪标签】【发声方式…】），没有才用这一镜的 audio_prompt。
+        _tone = str(ln.get("tone") or tone_prompt or "")
         try:
             from core.prosody import plan_prosody as _plan
             _pr = _plan(ln.get("emotion", ""), ln["text"], ln.get("action", ""),
-                        _hit, gender=(gender_of_character(_hit) if _hit else ""))
+                        _hit, gender=(gender_of_character(_hit) if _hit else ""),
+                        tone_prompt=_tone)
         except Exception as e:
             logger.warning("韵律规划失败（按中性朗读）：%s", e)
         lead_hint = float(_pr.get("lead") or 0.0)
@@ -1679,7 +1705,7 @@ async def dub_shot(
             ln["text"], v, settings, wav, target_span=span,
             emotion=ln.get("emotion", ""), action=ln.get("action", ""),
             character=_hit, gender=(gender_of_character(_hit) if _hit else ""),
-            prosody=_pr)
+            prosody=_pr, tone_prompt=_tone)
         if not res.get("ok") and v != default_voice:
             # ★★ 音色失败时**换一把再试一次**，而不是把这句丢掉。
             #   为什么必须有这一层：选角现在会用到**各厂商真实音色目录**里的音色
@@ -1692,7 +1718,7 @@ async def dub_shot(
                 ln["text"], default_voice, settings, wav, target_span=span,
                 emotion=ln.get("emotion", ""), action=ln.get("action", ""),
                 character=_hit, gender=(gender_of_character(_hit) if _hit else ""),
-                prosody=_pr)
+                prosody=_pr, tone_prompt=_tone)
             if res2.get("ok"):
                 warnings.append(
                     f"「{ln['text'][:14]}…」的选定音色（{v}）合成失败，"

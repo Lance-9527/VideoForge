@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import inspect
 from contextvars import ContextVar
 import re
 from dataclasses import dataclass, field
@@ -367,7 +368,11 @@ async def execute_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
                     "project_id": pid, "project_missing": True,
                 }
     try:
-        result = await spec.handler(args or {})
+        # ★ 2026-10-26：handler 可能是**同步函数**（直接返回 str/dict），
+        #   无条件 await 会抛 TypeError: 'str' object can't be awaited
+        #   （实测 generate_preview 就是这样挂掉的）。这里按可等待性分支。
+        _res = spec.handler(args or {})
+        result = await _res if inspect.isawaitable(_res) else _res
         if not isinstance(result, dict):
             return {"ok": True, "result": result}
         return result

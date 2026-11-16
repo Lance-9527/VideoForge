@@ -130,8 +130,15 @@ def parse_frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
             buf.append(stripped[2:])
             continue
         if mode == "block":
-            buf.append(line)
-            continue
+            # ★ 块标量的内容必须**比父键缩进更深**；顶格的 "key: value" 表示块结束了。
+            #   原来这里无条件把行吞进块里，于是 `source_method: |` 之后的
+            #   `cost:` / `version:` 永远解析不出来（所有带块标量的 skill 都丢这两个键，
+            #   2026-10-26 实测：写好的 version 在注册表里是空的）。
+            if not line.startswith((" ", "\t")) and _KV_RE.match(line):
+                flush()          # 块结束 → 先把块存下来，再按普通键处理这一行
+            else:
+                buf.append(line)
+                continue
         m2 = _KV_RE.match(line)
         if m2 and not line.startswith((" ", "\t")):
             flush()

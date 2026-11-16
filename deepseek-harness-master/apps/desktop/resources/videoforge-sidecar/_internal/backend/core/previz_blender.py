@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 VideoForge 白膜预演入口 —— Blender 3D 版
 ========================================
@@ -106,8 +106,19 @@ def blender_available() -> bool:
 
 
 def _outputs_root(db) -> str:
+    """白膜产物的根目录。
+
+    ★ 2026-10-26（用户要求：「后面白膜视频/图片都统一放在 D:\\下载\\白膜工作台」）：
+      白膜是**写给人看的中间产物**，不该混在成片输出目录里。
+      优先用专用设置 `previz_dir`；没配就退回 output_dir（老行为不变）。
+      调用方会再拼 `<pid>/previz`，所以白膜最终落在
+      `<previz_dir>/<pid>/previz/镜NN.mp4`。
+    """
     try:
         st = db.get_all_settings()
+        pdir = (st.get("previz_dir") or "").strip()
+        if pdir:
+            return os.path.abspath(os.path.expanduser(pdir))
         root = st.get("output_dir") or ""
         if root:
             return root
@@ -541,8 +552,13 @@ def design_to_character_cards(design) -> List[Dict[str, Any]]:
     return out
 
 
-def design_to_scene_cards(design) -> List[Dict[str, Any]]:
-    """从白膜设计表导出场景卡内容。"""
+def design_to_scene_cards(design, space_scale: str = "small") -> List[Dict[str, Any]]:
+    """从白膜设计表导出场景卡内容。
+
+    ★ 2026-10-26：space_scale 不再写死 "small" —— 场地大小是**设置**
+      （`previz_scene_scale`），场景卡要如实反映实际用的尺度，
+      否则资产库里全是"small"，后面复用时判断不了这个场景是不是大场面。
+    """
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "vf_previz_design3", os.path.join(_scripts_dir(), "design.py"))
@@ -568,7 +584,7 @@ def design_to_scene_cards(design) -> List[Dict[str, Any]]:
         out.append(dict(
             name=nm,
             location_type=e["location_type"],
-            space_scale="small",
+            space_scale=str(space_scale or "small"),
             lighting="单一油灯 暖黄光只够照亮局部（巷底半墙后 / 案头）",
             time_of_day=e["time_of_day"],
             weather=e["weather"],

@@ -147,10 +147,14 @@ async def t_previz_asset_cards(args: Dict[str, Any]) -> Any:
     try:
         d = pb._load_design("")  # noqa: SLF001
         chars = pb.design_to_character_cards(d)
-        scenes = pb.design_to_scene_cards(d)
+        # ★ 2026-10-26：场景卡的 space_scale 跟着**设置**走（previz_scene_scale），
+        #   不再写死 small —— 场地大小是设置，资产卡要如实反映。
+        from core.previz_scale import scene_scale
+        scenes = pb.design_to_scene_cards(d, space_scale=scene_scale())
     except Exception as e:  # noqa: BLE001
         return err(f"导出白膜资产卡失败：{type(e).__name__}: {e}")
     return ok(characters=chars, scenes=scenes,
               n_characters=len(chars), n_scenes=len(scenes),
+              space_scale=scene_scale(),
               note="这些是**待写入**的角色卡/场景卡内容。要落库请用"
                    "「创建角色 / 创建场景」接口把它们传进去。")

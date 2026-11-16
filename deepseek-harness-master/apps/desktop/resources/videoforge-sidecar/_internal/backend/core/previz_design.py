@@ -30,6 +30,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from core.previz_scale import fallback_size, limits as scale_limits, scene_scale
+
 logger = logging.getLogger("videoforge.previz_design")
 
 SPEC_VERSION = 1
@@ -45,8 +47,12 @@ POSES = ("stand", "hold", "sit", "squat", "prone", "run", "walk", "pull", "dragg
 # ──────────────────────── 小工具 ────────────────────────
 
 def _outputs_root(db) -> str:
+    """白膜产物的根目录（同 previz_blender：优先专用设置 previz_dir）。"""
     try:
         s = db.get_all_settings() or {}
+        pdir = (s.get("previz_dir") or "").strip()
+        if pdir:
+            return os.path.abspath(os.path.expanduser(pdir))
         base = (s.get("output_dir") or "").strip()
         if base:
             return os.path.abspath(os.path.expanduser(base))
@@ -132,17 +138,27 @@ def techviz_check(spec: Dict[str, Any]) -> List[str]:
     return issues
 
 
-def normalize_spec(spec: Any, shots: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def normalize_spec(spec: Any, shots: List[Dict[str, Any]],
+                   db: Optional[Any] = None) -> Optional[Dict[str, Any]]:
     """把模型给的规格**钳制成渲染器一定接得住**的形状。
 
     任何一处不合法都就地修（不整份丢弃）：钳尺寸、限数量、补默认值。
     返回 None 表示连镜头列表都对不上（调用方会走确定性兜底）。
+
+    ★ 2026-10-26：场地尺寸（地图大小）改成**按设置走**
+      （设置键 `previz_scene_scale` = small/medium/large，见 core/previz_scale.py）。
+      以前宽/深是写死的钳制上限（24/40），大场面根本放不下；
+      现在上限/默认值都跟着档位走，人物/道具/相机的活动范围也跟着场地走。
     """
     if not isinstance(spec, dict):
         return None
     raw = spec.get("shots")
     if not isinstance(raw, list) or not raw:
         return None
+
+    # ★ 场地尺寸上限/默认值（跟着设置走；不传 db 时按默认档 small = 今天的行为）
+    _lim = scale_limits(db)
+    _w_lim, _d_lim, _h_lim = _lim["width"], _lim["depth"], _lim["height"]
 
     out_shots: List[Dict[str, Any]] = []
     for i, sh in enumerate(raw[:12]):
@@ -158,14 +174,21 @@ def normalize_spec(spec: Any, shots: List[Dict[str, Any]]) -> Optional[Dict[str,
         kind = str(st.get("kind") or "room").lower()
         if kind not in SET_KINDS:
             kind = "room"
+        # ★ 场地尺寸（宽/深/高）：钳制范围与默认值都来自当前档位
+        _sw = _clamp(st.get("width"), _w_lim[0], _w_lim[1], _w_lim[2])
+        _sd = _clamp(st.get("depth"), _d_lim[0], _d_lim[1], _d_lim[2])
+        _sh = _clamp(st.get("height"), _h_lim[0], _h_lim[1], _h_lim[2])
+        # 人物/道具的活动范围：跟着场地走（大场景里人能站到 60m 外）
+        _half_w = max(20.0, _sw / 2)
+        _half_d = max(20.0, _sd / 2)
         props = []
         for p in (st.get("props") or [])[:12]:
             if isinstance(p, dict) and p.get("type"):
                 props.append({"type": str(p["type"])[:16],
                               **{key:p[key] for key in ('id','anchor','on_surface','role') if key in p},
-                              "x": _clamp(p.get("x"), -20, 20),
-                              "y": _clamp(p.get("y"), -20, 20),
-                              "z": _clamp(p.get("z"), 0, 4),
+                              "x": _clamp(p.get("x"), -_half_w, _half_w),
+                              "y": _clamp(p.get("y"), -_half_d, _half_d),
+                              "z": _clamp(p.get("z"), 0, max(4.0, _sh)),
                               "rot": _clamp(p.get("rot"), -180, 180),
                               "w": _clamp(p.get("w"), 0, 6),
                               "d": _clamp(p.get("d"), 0, 6),
@@ -186,11 +209,11 @@ def normalize_spec(spec: Any, shots: List[Dict[str, Any]]) -> Optional[Dict[str,
                     #   上面 3 米，画面里根本看不到人（"人物1 对象24"却空无一人）。
                     #   人的竖直偏移不可能超出 ±0.6m（上台阶/下坡而已）。
                     path.append([int(_clamp(p[0], 1, frames, 1)),
-                                 _clamp(p[1], -20, 20), _clamp(p[2], -20, 20),
+                                 _clamp(p[1], -_half_w, _half_w), _clamp(p[2], -_half_d, _half_d),
                                  _clamp(p[3] if len(p) > 3 else 0, -0.3, 0.6)])
             cast.append({"name": str(c["name"])[:20],
-                         "x": _clamp(c.get("x"), -20, 20),
-                         "y": _clamp(c.get("y"), -20, 20),
+                         "x": _clamp(c.get("x"), -_half_w, _half_w),
+                         "y": _clamp(c.get("y"), -_half_d, _half_d),
                          "rot": _clamp(c.get("rot"), -360, 360, 180),
                          "pose": pose,
                          "height": _clamp(c.get("height"), 0.9, 2.1, 1.72),
@@ -205,8 +228,8 @@ def normalize_spec(spec: Any, shots: List[Dict[str, Any]]) -> Optional[Dict[str,
         #   糊住 40% 画面，这一镜的白膜等于废了（用户看它没有任何意义）。
         #   规则：离侧墙 ≥0.8m、高度 0.7~2.4m（人眼高度带）、
         #        且不能穿进后墙里（y ≤ depth/2 - 0.8）。
-        _sw = _clamp(st.get("width"), 1.5, 24, 6)
-        _sd = _clamp(st.get("depth"), 1.5, 40, 8)
+        # ★ 2026-10-26：_sw/_sd/_sh 已在上面按**设置档位**算好，这里不再重算
+        #   （以前这里是写死的 1.5~24 / 1.5~40 —— 大场景放不下）。
         _xlim = max(0.0, _sw / 2 - 0.8)
         _ylim = _sd / 2 - 0.8
 
@@ -232,11 +255,18 @@ def normalize_spec(spec: Any, shots: List[Dict[str, Any]]) -> Optional[Dict[str,
             moves[0][0] = 1
             if len(moves) > 1:
                 moves[-1][0] = max(moves[-2][0] + 1, min(frames, moves[-1][0]))
-        _pos = [_clamp(v, -30, 30) for v in
-                (cam.get("position") or [0, -4, 1.6])[:3]] or [0, -4, 1.6]
+        # 相机原始坐标的钳制范围也跟着场地走（大场景里相机能退到 40m 外）；
+        # 小场景时仍然是原来的 ±30（保持今天的行为不变）
+        _cam_w = max(30.0, _sw / 2)
+        _cam_d = max(30.0, _sd / 2)
+        _cam_h = max(30.0, _sh)
+        _pos = [_clamp(v, -_cam_w, _cam_w) if i == 0 else
+                (_clamp(v, -_cam_d, _cam_d) if i == 1 else _clamp(v, -_cam_h, _cam_h))
+                for i, v in enumerate((cam.get("position") or [0, -4, 1.6])[:3])] or [0, -4, 1.6]
         _pos = list(_fix_cam(*_pos))
-        _look = [_clamp(v, -30, 30) for v in
-                 (cam.get("look_at") or [0, 0, 1.2])[:3]] or [0, 0, 1.2]
+        _look = [_clamp(v, -_cam_w, _cam_w) if i == 0 else
+                 (_clamp(v, -_cam_d, _cam_d) if i == 1 else _clamp(v, -_cam_h, _cam_h))
+                 for i, v in enumerate((cam.get("look_at") or [0, 0, 1.2])[:3])] or [0, 0, 1.2]
         # ══════════════════════════════════════════════════════════════
         # ★★ 2026-10-24（用户三连问：正对镜头 / 空桌 / 没运镜）
         #   白膜是"花钱前唯一的机位检查机会"，这三件事必须在规格里定死，
@@ -307,7 +337,7 @@ def normalize_spec(spec: Any, shots: List[Dict[str, Any]]) -> Optional[Dict[str,
             "set": {"kind": kind,
                     "width": _sw,
                     "depth": _sd,
-                    "height": _clamp(st.get("height"), 1.8, 8, 2.8),
+                    "height": _sh,
                     "enclosure":st.get('enclosure') or ('closed' if _positive(shot_text(shots[i],limit=6000) if i<len(shots) else '', '封闭') else 'cutaway'),
                     "props": props},
             "cast": cast,
@@ -510,6 +540,9 @@ def build_fallback_spec(db, project_id: str) -> Dict[str, Any]:
 
     不做花架子：场景类型按关键词猜、人物按资产库里的角色摆、相机给个能看全的
     中景。它比"别人的楼顶/村口"有意义得多 —— 至少是**这场戏的空间**。
+
+    ★ 2026-10-26：场地尺寸跟着**设置档位**走（small 还是今天的 6×9×2.8，
+      large 就是 120×160×12），相机的退后距离也跟着场地走。
     """
     shots = db.list_shots(project_id) or []
     chars = []
@@ -518,6 +551,11 @@ def build_fallback_spec(db, project_id: str) -> Dict[str, Any]:
     except Exception:  # noqa: BLE001
         chars = []
     names = [str(c.get("name") or "") for c in chars if c.get("name")][:3]
+
+    # 场地尺寸（跟着设置走）
+    _fw, _fd, _fh = fallback_size(db)
+    # 相机退后距离：跟着场地深度走（small 仍是今天的 -4.2）
+    _cam_y = -max(4.2, min(_fd / 2 - 0.8, _fd * 0.45))
 
     out = []
     for sh in shots[:12]:
@@ -534,10 +572,10 @@ def build_fallback_spec(db, project_id: str) -> Dict[str, Any]:
         out.append({
             "duration": round(dur, 2),
             "movement": "static",
-            "set": {"kind": kind, "width": 6, "depth": 9, "height": 2.8,
-                    "props": _props_from_text(text, 6, 9)},
+            "set": {"kind": kind, "width": _fw, "depth": _fd, "height": _fh,
+                    "props": _props_from_text(text, _fw, _fd)},
             "cast": cast,
-            "camera": {"position": [0, -4.2, 1.55], "look_at": [0, 0, 1.15],
+            "camera": {"position": [0, round(_cam_y, 2), 1.55], "look_at": [0, 0, 1.15],
                        "lens": 35, "moves": []},
             "note": ("（兜底规格：模型不可用，场景类型/道具按镜头文字推断，"
                      "只保证空间与机位可看）"),
@@ -600,7 +638,7 @@ _SCHEMA_HINT = """返回**严格 JSON**（不要 markdown 围栏、不要解释�
 · shot 数量与顺序**必须**和给定分镜一致，duration 用分镜给的秒数；
 · 24fps，所以最后一帧 = duration*24；moves 的第一帧必须是 1；
 · cast 的 y 与相机 y 不能重合（人物在 y≈0，相机在 y≈-4）；
-· set 的尺寸要像真地方：窄巷宽 2~3.5m、普通房间 4~7m、街道宽 6~10m；
+· set 的尺寸要像真地方（**按下面「场地尺度」一节给**，别自己拍脑袋）；
   **kind 的含义**：room=有墙有顶的室内；corridor=窄长通道；street=两侧有建筑的城市街道；
   roof=楼顶（四周无墙、有护栏）；field=**开阔野外**（田地/雪原/山野/河边 —— 地平线开阔、
   不要四面墙、不要天花板，远处可以有低矮起伏与稀疏树木剪影）；
@@ -664,6 +702,24 @@ def _shots_context(shots: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _scale_prompt_hint(db: Optional[Any] = None) -> str:
+    """告诉模型"这次白膜的场地有多大"（跟着设置档位走）。
+
+    ★ 为什么要单独一段：以前提示词里写死"窄巷 2~3.5m、普通房间 4~7m"，
+      模型照着给尺寸 ⇒ 永远只能渲小房间；用户要的是"装得下一个好莱坞"的
+      大场面（在设置里选 large）。所以尺寸口径必须跟着设置走。
+    """
+    name = scene_scale(db)
+    lim = scale_limits(db, name)
+    w, d, h = lim["width"][1], lim["depth"][1], lim["height"][1]
+    if name == "small":
+        return ("【场地尺度】本次 = small（室内小场景）：窄巷宽 2~3.5m、普通房间 4~7m、"
+                "街道宽 6~10m；set.width/depth/height 按这个量级给。")
+    return ("【场地尺度】本次 = **%s**（大场地，最大 %.0f×%.0f×%.0f m）："
+            "set.width/depth/height 要按这个量级给（别按小房间给），"
+            "人物/道具/相机都要落在这个场地里；" % (name, w, d, h))
+
+
 def generate_spec(db, project_id: str, *, force: bool = False) -> Dict[str, Any]:
     """生成并落盘本项目的白膜规格。
 
@@ -688,7 +744,14 @@ def generate_spec(db, project_id: str, *, force: bool = False) -> Dict[str, Any]
                 cached = json.load(f)
             if isinstance(cached, dict) and cached.get("shots") and cached.get('compiler_revision')==SPEC_COMPILER_REVISION:
                 _old_fp = str(cached.get("source_fingerprint") or "")
-                if _fp and _old_fp != _fp:
+                # ★ 2026-10-26：场地尺度也是 spec 的一部分 —— 改了设置档位，
+                #   旧 spec 的尺寸就过时了（必须重算，否则还是小房间）。
+                _old_scale = str(cached.get("scene_scale") or "")
+                _now_scale = scene_scale(db)
+                if _old_scale != _now_scale:
+                    logger.info("白膜 spec 已过期（场地尺度变了 %s→%s）→ 重新生成",
+                                _old_scale or "?", _now_scale)
+                elif _fp and _old_fp != _fp:
                     logger.info("白膜 spec 已过期（分镜/提示词变了 %s→%s）→ 重新生成",
                                 _old_fp or "?", _fp)
                 else:
@@ -700,14 +763,15 @@ def generate_spec(db, project_id: str, *, force: bool = False) -> Dict[str, Any]
     reason = ""
     try:
         llm = _make_llm(db)
-        user = (_SCHEMA_HINT + "\n\n" + _script_context(db, project_id)
+        user = (_SCHEMA_HINT + "\n\n" + _scale_prompt_hint(db)
+                + "\n\n" + _script_context(db, project_id)
                 + "\n\n【分镜表（按顺序）】\n" + _shots_context(shots))
         text = asyncio.run(llm.chat(
             [{"role": "system", "content": _SYS},
              {"role": "user", "content": user}],
             max_tokens=3000, temperature=0.2))
         from core.llm import extract_json
-        spec = normalize_spec(extract_json(text), shots)
+        spec = normalize_spec(extract_json(text), shots, db)
         if spec is not None:
             # ★ 模型常常把 props/cast 留空（怕乱加）→ 确定性补全，
             #   否则走廊里空无一物，白膜退化成"一个空盒子"。
@@ -726,7 +790,7 @@ def generate_spec(db, project_id: str, *, force: bool = False) -> Dict[str, Any]
 
     source = "llm"
     if spec is None:
-        spec = normalize_spec(build_fallback_spec(db, project_id), shots)
+        spec = normalize_spec(build_fallback_spec(db, project_id), shots, db)
         source = "fallback"
     if spec is None:
         return {"ok": False, "reason": reason or "无法生成白膜规格"}
@@ -750,6 +814,8 @@ def generate_spec(db, project_id: str, *, force: bool = False) -> Dict[str, Any]
         logger.warning("白膜 spec 校正失败（按原 spec 继续）：%s", _e)
     if _fp:
         spec["source_fingerprint"] = _fp
+    # ★ 记下这次的场地尺度（缓存校验用：改了档位就得重算）
+    spec["scene_scale"] = scene_scale(db)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:

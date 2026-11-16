@@ -329,7 +329,7 @@ def actor_baseline(character: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 def plan_prosody(emotion: str, text: str, action: str = "",
                  character: Optional[Dict[str, Any]] = None,
-                 *, gender: str = "") -> Dict[str, Any]:
+                 *, gender: str = "", tone_prompt: str = "") -> Dict[str, Any]:
     """把情绪 + 角色基线合成**可执行**的韵律参数。
 
     返回的字段直接喂给 TTS 与排轨：
@@ -371,6 +371,28 @@ def plan_prosody(emotion: str, text: str, action: str = "",
         source = why
     rate, pitch, vol, lead, tail = hit
 
+    # ★★ 语气提示词（2026-10-26，用户给的写法）：
+    #   【情绪标签】【发声方式：语速/气息/音调描述】台词内容
+    #   它比台词里那个短标签更具体 ⇒ 标签的**情绪**盖过台词的 emotion，
+    #   描述里的语速/气息/音调再在数值上叠一层（解析在 core/tone_prompt.py）。
+    #   认不出标签就**不猜**：宁可保持原样，也不要演出一个错的情绪。
+    tone: Optional[Dict[str, Any]] = None
+    if tone_prompt:
+        try:
+            from core.tone_prompt import parse_tone_prompt
+            tone = parse_tone_prompt(tone_prompt)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("语气提示词解析失败（按原情绪朗读）：%s", e)
+            tone = None
+    if tone and tone.get("ok"):
+        emo = str(tone.get("emotion") or emo)
+        source = "语气提示词【%s】" % tone.get("label")
+        rate = float(tone.get("rate") or rate)
+        pitch = float(tone.get("pitch_st") or 0.0)
+        vol = float(tone.get("volume") or vol)
+        lead = float(tone.get("lead") or lead)
+        tail = float(tone.get("tail") or tail)
+
     base = actor_baseline(character)
     rate = rate * float(base.get("rate") or 1.0)
     pitch = pitch + float(base.get("pitch") or 0.0)
@@ -388,6 +410,9 @@ def plan_prosody(emotion: str, text: str, action: str = "",
         "lead": round(max(0.0, lead), 3),
         "tail": round(max(0.0, tail), 3),
         "baseline": base,
+        # ★ 语气提示词解析结果原样带出去：上层要能说清"这句为什么这么念"，
+        #   也方便把标签/描述回写到分镜里（下次不用再猜）。
+        "tone": tone,
     }
 
 

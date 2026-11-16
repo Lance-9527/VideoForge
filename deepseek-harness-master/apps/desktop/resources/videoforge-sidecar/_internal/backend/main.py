@@ -316,6 +316,9 @@ def create_app(db_path: str = None) -> FastAPI:
     app.include_router(create_account_router())
     from core.studio_bridge import create_studio_router
     app.include_router(create_studio_router(db))
+    # ★ SuperSplat 命令队列（2026-10-31）：agent ⇄ 客户端里的 SuperSplat iframe。
+    from core.splat_bridge import create_splat_router
+    app.include_router(create_splat_router())
     # The workbench is part of this release, served from the same managed payload.
     studio_dir = Path(__file__).resolve().parent / "data" / "studio_workbench"
     if (studio_dir / "index.html").is_file():
@@ -325,6 +328,24 @@ def create_app(db_path: str = None) -> FastAPI:
                 response.headers["Cache-Control"] = "no-cache"
                 return response
         app.mount("/studio", _StudioStatic(directory=str(studio_dir), html=True), name="studio-workbench")
+
+    # ★ SuperSplat（2026-10-31）：**电商棚拍的场景框架**。
+    #   它是 PlayCanvas 的 3D 高斯泼溅编辑器（MIT），自带 transform / set_camera /
+    #   set_view / import_url / export_scene 等能力，并有浏览器内 MCP（webmcp.ts）。
+    #   做成**同源静态站**挂在 sidecar 上 ⇒ 客户端里的 iframe 能安全嵌入，
+    #   agent 也能在同源前提下直接调它注册到 navigator.modelContext 的工具。
+    supersplat_dir = Path(__file__).resolve().parent / "data" / "supersplat"
+    if (supersplat_dir / "index.html").is_file():
+        class _SuperSplatStatic(StaticFiles):
+            async def get_response(self, path, scope):
+                response = await super().get_response(path, scope)
+                response.headers["Cache-Control"] = "no-cache"
+                return response
+        app.mount(
+            "/supersplat",
+            _SuperSplatStatic(directory=str(supersplat_dir), html=True),
+            name="supersplat",
+        )
 
     # FFmpeg 智能获取（优先使用 launcher 传入的环境变量）
     import os as _os
@@ -4836,6 +4857,98 @@ def create_app(db_path: str = None) -> FastAPI:
         return success({"shots": shots,
                         "configured_providers": [k for k, v in keys.items() if v],
                         "default_mode": settings.get("default_render_mode") or "auto"})
+
+    # ── 无限画布（2026-10-31）──────────────────────────────────────────
+    # 画布是**视图**：节点引用 shots / characters / scenes 的真实对象，
+    # 只有位置和连线存在 canvas_nodes 表里 ⇒ 唯一真源不变。
+    def _fix_mojibake(value: str) -> str:
+        """库里存的中文路径可能是「UTF-8 字节被当 Latin-1 解出来」的乱码（既有数据问题）。
+
+        现象：`D:\\下载\\紫色工作台\\…` 在库里成了 `D:\\ä¸\\nexe\\…` ⇒ 取文件必失败。
+        试着按 latin-1 → utf-8 反解一次；能解开就用解开的，解不开就原样返回。
+        """
+        if not value:
+            return value
+        try:
+            repaired = value.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return value
+        return repaired
+
+    def _canvas_thumb(pid: str, kind: str, item: Dict[str, Any]) -> str:
+        """画布节点的缩略图：返回 sidecar /api/media 可取的路径（没有就空串）。
+
+        ★ 分镜优先用**白膜首帧 PNG**（`previz_path`），不要用 mp4：
+          Electron 自带的 Chromium **没有 H.264 解码器** ⇒ mp4 放进 <video> 是黑框。
+        """
+        if kind == "shots":
+            for key in ("previz_path", "image_path"):
+                value = item.get(key)
+                if isinstance(value, str) and value and not value.lower().endswith((".mp4", ".mov", ".webm")):
+                    return _fix_mojibake(value)
+            candidates = item.get("candidates")
+            if isinstance(candidates, list) and candidates:
+                first = candidates[0]
+                if isinstance(first, dict):
+                    for key in ("path", "url", "image_path"):
+                        value = first.get(key)
+                        if isinstance(value, str) and value and not value.lower().endswith((".mp4", ".mov", ".webm")):
+                            return _fix_mojibake(value)
+            return ""
+        for key in ("reference_image_path", "image_path", "portrait_path"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                return _fix_mojibake(value)
+        return ""
+    @app.get("/api/projects/{pid}/canvas")
+    async def get_canvas(pid: str):
+        """画布节点 + 还没上画布的可摆放对象（角色/场景/分镜）。"""
+        project = db.get_project(pid)
+        if not project:
+            raise HTTPException(status_code=404, detail="项目不存在")
+        nodes = db.list_canvas_nodes(pid) or []
+        placed = {(n.get("ref_type"), n.get("ref_id")) for n in nodes}
+        candidates: List[Dict[str, Any]] = []
+        for kind, items in (
+            ("shots", db.list_shots(pid) or []),
+            ("characters", db.list_characters(pid) or []),
+            ("scenes", db.list_scenes(pid) or []),
+        ):
+            for item in items:
+                iid = str(item.get("id") or "")
+                if (kind, iid) in placed:
+                    continue
+                candidates.append({
+                    "kind": kind, "ref_id": iid,
+                    "title": str(item.get("name") or item.get("title") or f"{kind}-{iid[:6]}"),
+                    "thumb": _canvas_thumb(pid, kind, item),
+                })
+        return success({"nodes": nodes, "candidates": candidates})
+
+    @app.put("/api/projects/{pid}/canvas")
+    async def put_canvas(pid: str, payload: Dict[str, Any]):
+        """整张画布覆盖保存（拖拽/连线后一次性提交）。"""
+        if not db.get_project(pid):
+            raise HTTPException(status_code=404, detail="项目不存在")
+        nodes = payload.get("nodes")
+        if not isinstance(nodes, list):
+            raise HTTPException(status_code=400, detail="nodes 必须是数组")
+        saved = db.replace_canvas_nodes(pid, [n for n in nodes if isinstance(n, dict)])
+        return success({"nodes": saved})
+
+    @app.post("/api/projects/{pid}/canvas/nodes")
+    async def post_canvas_node(pid: str, payload: Dict[str, Any]):
+        """新增/更新单个画布节点。"""
+        if not db.get_project(pid):
+            raise HTTPException(status_code=404, detail="项目不存在")
+        node = db.upsert_canvas_node(pid, payload or {})
+        return success({"node": node})
+
+    @app.delete("/api/projects/{pid}/canvas/nodes/{nid}")
+    async def delete_canvas_node(pid: str, nid: str):
+        if not db.delete_canvas_node(nid):
+            raise HTTPException(status_code=404, detail="节点不存在")
+        return success({"deleted": nid})
 
     # ── 分镜提示词（三段式：video / negative / audio + 角色·场景锚定）──────
     # 设计稿来自 claude-opus-5 的协议（2026-10-22）；实现在 core/shot_prompts.py。

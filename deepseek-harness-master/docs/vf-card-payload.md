@@ -230,6 +230,32 @@ VfToolRow({ phase, block }) → readPayload(block.meta) → <卡片>
 
 ---
 
+## 6.8 什么时候才出卡（2026-10-26 实机改）
+
+用户实机提了三条：「一个流程要点好几次确认」「选项框出现时会话还没结束」「点了确认它还在反复问」。
+根因不是渲染层，是**出卡太早、出卡太多、点完没有状态**。现在的规矩：
+
+| 场景 | 出不出 `gate` 卡 | 为什么 |
+|---|---|---|
+| **花钱步（`looks`/`draft`/`final`）还没拿到用户同意** | ✅ 出（这张卡就是"请确认"） | 工具**不起 job**，只回 `{ok:false, card, error, next_action}`；`next_action` 写明"先提案 → 结束本轮 → 用户回「确认：<stage>」→ 带 `confirm=true` 再调一次" |
+| 花钱步**确认后**真的在跑 | ❌ 不出 | 提案卡在确认之前已经给过；再给一张"下一步：X"就是在开工时还弹框 |
+| **内容复核步**（`script` / `shots`） | ✅ 出 | 内容做完了，要把剧本正文 / 分镜提示词摊给用户过一遍 |
+| 其余免费步（`assets` / `previz` / `compose`） | ❌ 不出 | 做完一句话汇报即可；沿途弹框就是"一路点确认"的来源 |
+
+> 代码：`packages/video/vf-video/lib/core.js` 的 `CARD_STAGES`（出卡阶段）与 `makeStageJobTool`
+> （confirm 闸门）。离线自测：`node packages/video/vf-video/selftest-flow.mjs`。
+
+### 点完按钮之后
+
+- **按钮只发一条用户消息**（`conversation.send`），服务端不存"用户同意"；唯一的授权位是
+  模型自己填的 `confirm=true`（工具参数），后端硬门只认它。
+- 客户端按 `(会话, 步骤)` 记住用户的选择（`ui-vf-cards` 的 `answeredSteps`）：
+  同一步再出一张卡时，**折叠成一行"已处理"**，不再重复问。
+- **这一轮还在跑时按钮是锁住的**（`ctx.uiSession.sessionStatus.running`）：
+  提案卡是在回合中途出现的，让用户"等这一轮结束再点"，或者直接在对话里说「确认：<stage>」。
+
+---
+
 ## 7. 验收清单（写载荷的人自查）
 
 - [ ] `card:'vf'` + `kind` 都在，且 `kind` 在四值域内
@@ -240,3 +266,4 @@ VfToolRow({ phase, block }) → readPayload(block.meta) → <卡片>
 - [ ] `media[].url` 是 `http://127.0.0.1:8765/...` 形状，`path` 做过 `encodeURIComponent`，**没有 base64**
 - [ ] `error` 是失败原文，没有被改写成"出错了"
 - [ ] 载荷里**没有**敏感信息（api key、绝对家目录以外的路径）
+- [ ] **不是每个阶段都出卡**（见 §6.8）：花钱步的提案卡与内容复核卡之外，不出 `gate` 卡

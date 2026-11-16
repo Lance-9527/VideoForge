@@ -49,6 +49,23 @@ pnpm --filter @videoforge/desktop build
 #    _internal/backend/，再用 PyInstaller 生成 _internal/ 运行时
 ```
 
+### 深度模型权重：构建时自动拉取（不入库）
+
+景深/全景合成用的 **Depth Anything V2 Small** 权重（约 26MB）**不在 npm 上**，
+仓库也不收这个二进制（`.gitignore` 排除了 `resources/models/`）。打包脚本会自己把它取回来：
+
+```bash
+cd deepseek-harness-master
+node apps/desktop/scripts/fetch-model-payload.mjs   # 已存在且校验通过会跳过
+```
+
+- 来源：[`onnx-community/depth-anything-v2-small`](https://huggingface.co/onnx-community/depth-anything-v2-small)（Apache-2.0）
+- 下载后**逐个核对 sha256**（校验值写死在 `scripts/model-payload.mjs`），对不上就删掉重下
+- 源站顺序：**`hf-mirror.com` 优先、`huggingface.co` 兜底**（国内直连 HF 不稳）
+- `resources/ort/` 里的 onnxruntime-web wasm 由 `node scripts/stage-models.mjs` 从 pnpm store 拷入
+
+许可与署名见仓库根的 [`NOTICE`](./NOTICE)。
+
 ## 架构
 
 ```

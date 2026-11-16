@@ -4,6 +4,11 @@ node_modules/
 .yarn/
 *.tsbuildinfo
 
+# ──────────── Python 字节码（**绝不入库**：本地跑一次就产生）────────────
+__pycache__/
+*.py[cod]
+*$py.class
+
 # ──────────── 编译产物（源码在 src/，产物不入库）────────────
 **/lib/
 **/dist/
@@ -28,6 +33,15 @@ release/
 *.msi
 *.zip
 *.7z
+
+# ──────────── 第三方模型运行时（**构建期下载，不入库**）────────────
+#   · 深度估计权重 Depth-Anything-V2-Small（Apache-2.0）
+#     → `node scripts/fetch-model-payload.mjs` 按 sha256 校验后落到 resources/models/
+#   · onnxruntime-web 的 wasm（MIT）
+#     → `node scripts/stage-models.mjs` 从 pnpm store 拷进 resources/ort/
+#   实测：本机 huggingface.co 不通（HTTP 000），hf-mirror.com 可用（HTTP 200）。
+deepseek-harness-master/apps/desktop/resources/models/
+deepseek-harness-master/apps/desktop/resources/ort/
 
 # ──────────── Python sidecar 的打包运行时（由构建脚本生成）────────────
 # ★ 注意：排除父目录后，git **不会**再进入该目录，
@@ -95,6 +109,8 @@ Thumbs.db
 # ──────────── 顶层一次性开发脚本（改 DSH 源码用的过程文件）────────────
 #   它们**不影响软件使用**，只是"我们怎么改 DSH"的过程记录。
 #   本地全部保留，只是不进公开仓库（已证明会藏真实 API Key）。
+#   ★ `/work/` 同理：里面是调试脚本、审计截图，以及两份**第三方仓库源码**
+#     （ooosplat / img2threejs，Apache-2.0）—— 那是调研素材，不是本项目代码。
 /*.py
 /*.mjs
 /*.cjs
@@ -109,6 +125,7 @@ Thumbs.db
 /film/
 /shots/
 /tools/
+/work/
 /tarcheck/
 /tarcheck2/
 /tarcheck3/

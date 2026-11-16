@@ -47,3 +47,8 @@ worktrees/
 .agents/worktrees/
 .typert-*/
 native/system/test/bin/
+
+# 品牌参数化的生成物（package-target.ts 按 --brand 写）
+apps/desktop/resources/brand.json
+apps/desktop/resources/win/ShopSteward.cmd
+apps/desktop/scripts/installer-shop.nsh

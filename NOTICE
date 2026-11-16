@@ -1,0 +1,61 @@
+# NOTICE
+
+本项目（VideoForge / OpenVideoForge）在发布构建中会随包分发下列第三方组件。
+本文件只覆盖**随安装包分发**的二进制与模型；npm 依赖的完整清单见
+[`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)（由 `scripts/gen-third-party-notices.ts` 生成）。
+
+---
+
+## 1. Depth Anything V2 Small（深度估计模型权重）
+
+| 项 | 值 |
+| --- | --- |
+| 组件 | `model_quantized.onnx` + `config.json` + `preprocessor_config.json`（约 26 MB） |
+| 上游 | [`onnx-community/depth-anything-v2-small`](https://huggingface.co/onnx-community/depth-anything-v2-small)（ONNX 导出版） |
+| 基础模型 | [`depth-anything/Depth-Anything-V2-Small`](https://huggingface.co/depth-anything/Depth-Anything-V2-Small) |
+| 许可 | Apache License 2.0 |
+| 本项目改动 | **无**。原样分发上游字节，sha256 记录在 `apps/desktop/scripts/model-payload.mjs` |
+
+Apache-2.0 §4 要求随分发附带许可副本与变更说明：
+
+- 许可证全文：https://www.apache.org/licenses/LICENSE-2.0
+- 变更说明：本项目**未修改**该模型文件，仅按 sha256 校验后原样打包。
+- 上游模型卡与许可声明：<https://huggingface.co/onnx-community/depth-anything-v2-small>
+
+仓库**不收录**这 26MB 二进制；构建时由 `apps/desktop/scripts/fetch-model-payload.mjs`
+从 HF 模型仓库拉取（`hf-mirror.com` 优先、`huggingface.co` 兜底），并强制校验 sha256。
+
+---
+
+## 2. onnxruntime-web（ONNX 推理运行时）
+
+| 项 | 值 |
+| --- | --- |
+| 组件 | `ort-wasm-simd-threaded.wasm` / `ort-wasm-simd-threaded.mjs` / `ort.wasm.bundle.min.mjs`（约 12 MB） |
+| 版本 | 1.21.0 |
+| 上游 | <https://github.com/microsoft/onnxruntime> |
+| 许可 | MIT |
+| 本项目改动 | **无**。由 `apps/desktop/scripts/stage-models.mjs` 从 pnpm store 原样拷入 |
+
+---
+
+## 3. PlayCanvas（WebGL 渲染引擎）
+
+| 项 | 值 |
+| --- | --- |
+| 组件 | `playcanvas`（npm 依赖，用于电商工作台的 3D 预览） |
+| 上游 | <https://github.com/playcanvas/engine> |
+| 许可 | MIT |
+
+---
+
+## 4. DeepSeek Harness（DSH 底座）
+
+本仓库的 `deepseek-harness-master/` 目录来自 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，
+按 **MIT** 许可使用。版权声明见 [`LICENSE`](./LICENSE) 与 `deepseek-harness-master/LICENSE`。
+
+---
+
+## 5. 本项目自身
+
+MIT，见 [`LICENSE`](./LICENSE)。

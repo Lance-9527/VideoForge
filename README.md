@@ -1,9 +1,3 @@
-> [!IMPORTANT]
-> **本仓库已于 2026-11-16 归档。**
-> 最新版本迁移至 **[`Lance-9527/OpenVideoForge`](https://github.com/Lance-9527/OpenVideoForge)** ——
-> 商品图 / 商品视频生产流水线已独立成品牌仓库，提交历史与 MIT 许可证保持一致。
-> 后续代码、打包与更新请到新仓库；此处仅保留历史版本。
-
 <div align="center">
 
 # VideoForge

@@ -42,6 +42,7 @@ const WORKSPACE_TABS = [
   { key: 'chat', label: 'AI 对话' },
   { key: 'assets', label: '资产' },
   { key: 'post', label: '后期' },
+  { key: 'canvas', label: '画布' },
 ] as const
 
 /** Store shape the services expose (`getSnapshot` + `subscribe`). */
@@ -352,8 +353,11 @@ export function VfRail(props: { sessions?: SessionsService; workspaces?: Workspa
     if (project.id === undefined) return
     // Only a persisted binding identifies a project conversation. Titles are not identities.
     const bound = boundSessionOf(project)
+    // ★ 2026-11-01：正在看画布/后期时点项目 = **换这个项目的画布/后期**，
+    //   而不是把人踢回"资产"。以前点项目总是跳 assets ⇒ 画布上选个项目就丢了画布。
+    const keepSection = view.section === 'canvas' || view.section === 'post' ? view.section : 'assets'
     setVfView({
-      section: 'assets',
+      section: keepSection,
       projectId: project.id,
       projectTitle: project.title ?? null,
       returnSessionId: bound,

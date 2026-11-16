@@ -1,0 +1,37 @@
+{
+  "$comment": "桌面外壳的品牌目录。scripts/package-target.ts --brand <id> 选一个，解析结果写进 resources/brand.json 随包发布。",
+  "brands": {
+    "videoforge": {
+      "id": "videoforge",
+      "appName": "VideoForge",
+      "productName": "VideoForge",
+      "artifactPrefix": "videoforge",
+      "dataDirName": "VideoForge",
+      "icon": "icon-windows.png",
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@deepseek-ai/dsh-vf-video"
+      ],
+      "keepDshHomeEnv": "VIDEOFORGE_KEEP_DSH_HOME",
+      "trayIcon": "tray-windows.ico"
+    },
+    "shop": {
+      "id": "shop",
+      "appName": "掌柜 AI",
+      "productName": "ShopSteward",
+      "artifactPrefix": "shopsteward",
+      "dataDirName": "ShopSteward",
+      "icon": "icon-shop-windows.png",
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "@deepseek-ai/dsh-shop-agent"
+      ],
+      "keepDshHomeEnv": "SHOPSTEWARD_KEEP_DSH_HOME",
+      "appId": "com.shopsteward.desktop",
+      "sidecarPort": 8767,
+      "trayIcon": "tray-shop-windows.ico"
+    }
+  }
+}

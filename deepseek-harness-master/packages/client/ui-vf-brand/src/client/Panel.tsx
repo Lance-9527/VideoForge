@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { setVfView, useVfView } from './view.ts'
 import { AssetLibrary } from './AssetLibrary.tsx'
+import { VfCanvas, VfProjectPicker } from './Canvas.tsx'
 
 /** Python 视频服务地址（与其余壳件一致）。 */
 const SIDECAR = 'http://127.0.0.1:8765'
@@ -103,8 +104,14 @@ async function fetchJson<T>(path: string): Promise<T | null> {
 
 /**
  * 主区面板。`section === 'chat'` 时返回 null（完全让位给对话）。
+ *
+ * @param props.onBack - 回到对话（返回会话 id）。
+ * @param props.onSend - 把一句话发进会话（画布节点「⚡ 让 agent 处理」用）。
  */
-export function VfPanel(props: { onBack?: () => string | void } = {}) {
+export function VfPanel(props: {
+  readonly onBack?: () => string | void
+  readonly onSend?: (sessionId: string, text: string) => void
+} = {}) {
   const view = useVfView()
   const [project, setProject] = useState<ProjectInfo | null>(null)
   const [stages, setStages] = useState<readonly StageRow[]>([])
@@ -213,22 +220,56 @@ export function VfPanel(props: { onBack?: () => string | void } = {}) {
     setNavigationError(props.onBack() ?? null)
   }
 
+
   if (view.section === 'chat') return null
 
-  if (projectId === null) {
+  // ★ 无限画布（2026-11-01 v2）：整块画布自己占满主区。
+  //   **没选项目时不再是一句死胡同** —— 画布内部给项目列表，点一个就进去。
+  if (view.section === 'canvas') {
     return (
-      <div style={shellStyle}>
-        <div style={{ maxWidth: 520, margin: '14vh auto 0', textAlign: 'center', color: C.dim }}>
-          <div style={{ fontSize: 18, color: C.text, marginBottom: 8 }}>
-            {view.section === 'assets' ? '资产' : '后期'}
-          </div>
-          <div style={{ fontSize: 13, lineHeight: 1.8 }}>
-            先从左边选一个项目 —— 资产和成片都是**按项目**的。<br />
-            还没项目？回到「AI 对话」说一句「做个 12 秒短片」就能立项。
-          </div>
-          <button type="button" style={primaryButton} onClick={back}>
-            回到 AI 对话
+      <div style={{ ...shellStyle, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 22px', borderBottom: `1px solid ${C.line}` }}>
+          <button
+            type="button"
+            onClick={back}
+            title="回到这个项目对应的 AI 会话"
+            style={backButton}
+          >
+            ← AI 对话（回到对应会话）
           </button>
+          <div style={{ fontWeight: 650, fontSize: 15 }}>
+            {projectId === null ? '画布' : `画布 · ${project?.title ?? view.projectTitle ?? '项目'}`}
+          </div>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: C.dimmer }}>
+            {projectId === null ? '先选一个项目' : '拖动排布 · 连线标注 · 一键交给 agent'}
+          </span>
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <VfCanvas
+            projectId={projectId}
+            sessionId={view.returnSessionId}
+            onSend={props.onSend}
+            onPickProject={(id, title) => { setVfView({ projectId: id, projectTitle: title }) }}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  if (projectId === null) {
+    // ★ 2026-11-01：不再是一句「先从左边选一个项目」的死胡同 —— 直接把项目列出来点。
+    return (
+      <div style={{ ...shellStyle, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 22px', borderBottom: `1px solid ${C.line}` }}>
+          <div style={{ fontWeight: 650, fontSize: 15 }}>{view.section === 'assets' ? '资产' : '后期'}</div>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: C.dimmer }}>先选一个项目</span>
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <VfProjectPicker
+            title={view.section === 'assets' ? '资产 · 先选一个项目' : '后期 · 先选一个项目'}
+            hint="资产和成片都是按项目存的。选一个项目进去看；还没有项目就回「AI 对话」说一句「做个 12 秒短片」立项。"
+            onPicked={(id, title) => { setVfView({ projectId: id, projectTitle: title }) }}
+          />
         </div>
       </div>
     )
@@ -512,14 +553,3 @@ const backButton: DesktopSurfaceStyle = {
   whiteSpace: 'nowrap',
 }
 
-const primaryButton = {
-  marginTop: 16,
-  padding: '8px 16px',
-  borderRadius: 9,
-  border: `1px solid ${C.accent}`,
-  background: 'color-mix(in srgb, #7ac130 16%, transparent)',
-  color: C.accent,
-  font: 'inherit',
-  fontSize: 13,
-  cursor: 'pointer',
-} as const

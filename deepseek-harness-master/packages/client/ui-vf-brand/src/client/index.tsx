@@ -67,10 +67,62 @@ export function apply(ctx: ClientContext): void {
   //   用户看到的就是"点了没反应"。现在改成在 ctx.inject 里拿引用。
   let uiWorkspaceRef: { openSession: (id: string) => void } | undefined
   let sessionsRef: { list?: { getSnapshot: () => { ids?: string[] } } } | undefined
+  // ★ 2026-10-31：画布节点「⚡ 让 agent 处理」要用的会话作用域。
+  //   **sessions 也是注入作用域里的服务** —— root ctx 上取不到（和 uiWorkspace 同坑）。
+  //   所以必须在 ctx.inject 的回调里把引用存下来，不能在根上直接摸 ctx.sessions。
+  let sessionScopeRef: {
+    scope: (id: string) => { get: (name: string) => unknown } | undefined
+  } | undefined
   ctx.inject(['uiWorkspace', 'sessions'], (scope) => {
     uiWorkspaceRef = (scope as unknown as { uiWorkspace: { openSession: (id: string) => void } }).uiWorkspace
     sessionsRef = scope.sessions as unknown as typeof sessionsRef
+    sessionScopeRef = scope.sessions as unknown as typeof sessionScopeRef
   })
+
+  // ★ 2026-10-31（无限画布）：节点上的「⚡ 让 agent 处理」= 把一句话发进该项目的会话。
+  //   写法照抄 ui-vf-cards 的真机结论：**必须走会话作用域** ——
+  //   `conversation.send()` 内部用 scopeId(this.ctx) 取会话标签，根作用域调用会抛
+  //   「conversation.send requires a session scope」。
+  //
+  //   实测还有两层坑（都踩过）：
+  //   ① root ctx 上取不到 `sessions`（services 是注入作用域里的）；
+  //   ② **没被客户端加载的会话**（用户只是"绑定"了它）scope 里没有 conversation 服务
+  //      ⇒ 要先把会话打开（openSession），等它成为当前会话，再用**会话作用域**取。
+  const deliver = (conversation: { send: (t: string) => Promise<void> } | undefined, text: string): boolean => {
+    if (conversation === undefined) return false
+    void conversation.send(text).catch((error: unknown) => {
+      console.error('[vf-canvas] send failed:', error)
+    })
+    return true
+  }
+  const scopedConversation = (sessionId: string): { send: (t: string) => Promise<void> } | undefined => {
+    if (sessionScopeRef === undefined) return undefined
+    const scoped = sessionScopeRef.scope(sessionId)
+    return scoped?.get('conversation') as { send: (t: string) => Promise<void> } | undefined
+  }
+  const sendToAgent = (sessionId: string, text: string): void => {
+    if (sessionScopeRef === undefined) {
+      console.error('[vf-canvas] 会话服务还没就绪')
+      return
+    }
+    // ① 会话已加载 ⇒ 直接用它的会话作用域
+    if (deliver(scopedConversation(sessionId), text)) return
+    // ② 没加载 ⇒ 先打开它，等它成为当前会话，再用会话作用域取（root 上的那份不能发）
+    if (uiWorkspaceRef !== undefined) {
+      try {
+        uiWorkspaceRef.openSession(sessionId)
+      } catch (error) {
+        console.error('[vf-canvas] openSession 失败:', error)
+      }
+      window.setTimeout(() => {
+        if (!deliver(scopedConversation(sessionId), text)) {
+          console.error('[vf-canvas] 打开会话后仍取不到会话作用域的 conversation，sessionId=', sessionId)
+        }
+      }, 1200)
+      return
+    }
+    console.error('[vf-canvas] 没有可用的工作区服务，无法打开会话')
+  }
 
   const backToConversation = (): string | void => {
     // ★ 2026-10-24（用户第二次反馈）：只回到**这个项目绑定/标题匹配**的会话。
@@ -150,7 +202,7 @@ export function apply(ctx: ClientContext): void {
   //   这是 VideoForge 自己的信息架构，DSH 里没有对应页面 —— core 零改动。
   ctx.slots.inject('shell.overlay', function* () {
     yield ctx.slots.register({ name: 'shell.overlay', id: 'vf-panel', order: 20 }, () => (
-      <VfPanel onBack={backToConversation} />
+      <VfPanel onBack={backToConversation} onSend={sendToAgent} />
     ))
   })
 

@@ -1,0 +1,48 @@
+{
+  "name": "@deepseek-ai/dsh-shop-agent",
+  "version": "0.2.1-rc.2",
+  "description": "掌柜 AI bundle: 电商 agent 工具（平台规格 / 品类节拍 / 文案合规体检 / 卖点改写 / 商品视频方案 / AI 内容标识），全部走本机 sidecar 的 /api/ecommerce/*，零付费零联网",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./lib/*": "./lib/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/shop-tools.js",
+    "cordis.patch.yml",
+    "skills/shop/SKILL.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "workspace:*",
+    "@deepseek-ai/dsh-client-ui-shop-brand": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-shop-brand": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/video/shop-agent"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-tools": "workspace:*"
+  }
+}

@@ -29,12 +29,7 @@ export { VfStudio } from './Studio.tsx'
 export { VfStudioIcon } from './Icon.tsx'
 export { api, sidecarBase, setSidecarBase } from './api.ts'
 export type {
-  AiLabelPlan,
-  CategoryBrief,
-  EcomPlan,
-  PlatformBrief,
   RemakeResult,
-  SellingPointRewrite,
 } from './api.ts'
 
 /** 面板 id：`sidebar.panellist` 的 list id 与 `main` 的 key 都用它，必须一致。 */

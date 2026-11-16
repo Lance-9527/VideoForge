@@ -22,6 +22,7 @@ export const DESKTOP_IPC = {
   browserOpenRequested: 'dsh-desktop:browser-open-requested',
   directoryPick: 'dsh-desktop:directory-pick',
   deviceInfo: 'dsh-desktop:device-info',
+  localServices: 'dsh-desktop:local-services',
   localeBootstrap: 'dsh-desktop:locale-bootstrap',
   localeChanged: 'dsh-desktop:locale-changed',
   updatesStatus: 'dsh-desktop:updates-status',
@@ -60,6 +61,21 @@ export type DesktopUpdateFailureKind =
   | 'tasks-changed'
   | 'tasks-unavailable'
 
+/**
+ * Local service endpoints the renderer needs.
+ *
+ * The main process owns both ports: the sidecar port follows the brand (掌柜 AI
+ * 8767) and the model runtime port follows the port the server actually bound.
+ * The renderer reads them here instead of hardcoding an address that goes stale
+ * the moment a port is taken.
+ */
+export interface DesktopLocalServices {
+  /** Sidecar base URL, such as `http://127.0.0.1:8767`. */
+  readonly sidecarBase: string
+  /** Model runtime base URL; empty when the runtime service failed to start. */
+  readonly depthRuntimeBase: string
+}
+
 /** Semantic status content; actions open main-process confirmation dialogs only. */
 export interface DesktopUpdatePresentation {
   readonly phase: DesktopUpdateState['phase']
@@ -79,6 +95,11 @@ export interface DshDesktopProductApi {
    * @returns `name=value` fields separated by `; `, with no hostname, user name, or serial number.
    */
   deviceInfo(): Promise<string>
+  /**
+   * Read the local service endpoints the main process owns.
+   * @returns Sidecar and model runtime base URLs.
+   */
+  localServices(): Promise<DesktopLocalServices>
   readonly updates: {
     status(): Promise<DesktopUpdatePresentation>
     open(): Promise<void>

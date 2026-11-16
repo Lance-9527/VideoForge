@@ -33,8 +33,12 @@
         #   不写这一行时 index.js 只注册 `S0_STAGE_KEYS`（core.js 里 cost==='free' 的
         #   shots/previz/compose 三个），于是 vf_script / vf_assets / vf_looks /
         #   vf_draft / vf_final **根本不存在**，agent 只能走 3/9 步 —— 产品"跑不通"。
-        #   花钱的三步（looks/draft/final）由 lib/index.js 的 `tools/pre-execute`
-        #   返回 {kind:'ask'} 交给原生 approval，不在工具内部挡。
+        #   花钱的三步（looks/draft/final）由 **工具自己的 confirm 闸门**挡：
+        #   没带 confirm=true 时工具**不起 job**、只回一张提案卡 + "下一步该做什么"
+        #   （见 lib/core.js 的 makeStageJobTool）。
+        #   ★ 原生 approval（tools/pre-execute → {kind:'ask'}）在"完全权限"会话里
+        #   会被自动判拒，所以那条路已经停用（lib/index.js 的 PAID_TOOLS 直通 next()）——
+        #   这里曾经写着"交给原生 approval"，是文档漂移，现已按实现更正。
         stageKeys: ['script', 'assets', 'looks', 'shots', 'previz', 'draft', 'final', 'compose']
 
 # ③ VideoForge 壳：品牌位 + 落地工作台（client bundle，手写 ESM）

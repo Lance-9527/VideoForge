@@ -96,6 +96,39 @@ export interface VfCardPayload {
 /** 卡片动作：按钮一律走「发一条用户消息」（与输入框同一条路径）。 */
 export interface VfCardActions {
   send: (text: string) => void
+  /**
+   * 这一步在本会话里已经表过态时的键（`${sessionId}::${stage}`）。
+   * 没有就不记（动作照常发）。
+   */
+  sessionId?: string | undefined
+  /**
+   * 会话这一轮**还在跑**吗（自定义 hook，组件体里无条件调用）。
+   *
+   * 为什么需要：用户实机抱怨「点了确认，当前会话还没结束」——
+   * 提案卡是在**这一轮还没结束**的时候贴出来的，于是按钮先于回合结束就能点。
+   * 这里把按钮在回合运行中锁住，并把这句话说给用户听。
+   */
+  useRunning?: (() => boolean) | undefined
+}
+
+/**
+ * 用户在本会话里对某一步已经表过态（确认 / 要改 / 跳过）。
+ *
+ * 键 = `${sessionId}::${stage}`，值 = 动作名。
+ *
+ * 为什么记着（用户实机："点确认之后它还在反复问"）：
+ *   提案卡是**历史消息**里的内容 —— 模型又问一遍时，宿主会**再贴一张新卡**，
+ *   新卡是新的组件实例，组件内的 `sentAct` 是空的 ⇒ 按钮又亮起来，
+ *   用户看着就像"我明明点过了，它还在问"。这里按 (会话, 步骤) 记住用户的选择，
+ *   之后同一步的任何一张卡都显示成"已处理"，不再问第二遍。
+ */
+const answeredSteps = new Map<string, string>()
+
+/** 这一步的记账键：优先用 stage，其次用标题（没有 stage 的卡也能记住）。 */
+function stepKeyOf(actions: VfCardActions, stage: string, title: string): string {
+  const sid = actions.sessionId || ''
+  const what = stage || title || 'unknown'
+  return `${sid}::${what}`
 }
 
 /* ───────────────────────── 样式（老站逐条抄）───────────────────────── */
@@ -310,10 +343,38 @@ export function GateCard(props: { payload: VfCardPayload; actions: VfCardActions
   const isLastStep = stage === 'compose'
   const script = typeof payload.script_text === 'string' ? payload.script_text.trim() : ''
 
+  // ★ 2026-10-26：这一轮还在跑吗？（用户实机："点了确认，当前会话还没结束"）
+  //   提案卡贴出来的时候这一轮往往还没结束 ⇒ 按钮先于回合结束就能点。
+  //   这里把按钮锁住，并说明"等它结束再点 / 也可以直接在对话里说确认"。
+  const running = actions.useRunning ? actions.useRunning() : false
+  // ★ 2026-10-26：这一步用户是不是已经表过态了？（"点了确认它还在反复问"）
+  const stepKey = stepKeyOf(actions, stage, String(payload.title || ''))
+  const answered = answeredSteps.get(stepKey) ?? null
+  const locked = answered !== null || running
+
   const act = (kind: string, text: string, note: string): void => {
     setSentAct(kind)
     setMsg(note)
+    answeredSteps.set(stepKey, kind)
     actions.send(text)
+  }
+
+  // ★ 2026-10-26：这一步用户已经表过态 ⇒ 这一张卡**不再重复问**，
+  //   折叠成一行"已处理"。旧卡留在对话里没关系，但它不能再是一张还在等的卡。
+  if (answered !== null && sentAct === null) {
+    const what = answered === 'confirm' ? '已确认' : answered === 'modify' ? '已说要改' : '已跳过'
+    return (
+      <div className="vf-cards">
+        <style>{CSS}</style>
+        <div className="agent-gate" data-vf-card="gate-done">
+          <Head payload={payload} badge="已处理" extra={what} />
+          <div className="agent-gate-note">
+            {stage || payload.title || ''}：{what}，不再重复确认。
+            {answered === 'modify' ? '（要接着说改哪一处）' : ''}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -404,7 +465,7 @@ export function GateCard(props: { payload: VfCardPayload; actions: VfCardActions
           <button
             className="primary-btn"
             data-vf-gate-act="confirm"
-            disabled={sentAct !== null}
+            disabled={locked || sentAct !== null}
             onClick={() => {
               act('confirm', `确认：${stage || payload.title || ''}`,
                 spend ? '已发起确认 —— 批准后才会扣费' : '已发送，模型接着往下做，可能要几分钟…')
@@ -412,35 +473,46 @@ export function GateCard(props: { payload: VfCardPayload; actions: VfCardActions
           >
             {sentAct === 'confirm'
               ? '已发送 ✓'
-              : isLastStep
-                ? '✅ 确认完成'
-                : spend
-                  ? '✅ 确认后开始'
-                  : '✅ 确认，开始做'}
+              : answered === 'confirm'
+                ? '已确认 ✓'
+                : isLastStep
+                  ? '✅ 确认完成'
+                  : spend
+                    ? '✅ 确认后开始'
+                    : '✅ 确认，开始做'}
           </button>
           <button
             className="secondary-btn"
             data-vf-gate-act="modify"
-            disabled={sentAct !== null}
+            disabled={locked || sentAct !== null}
             onClick={() => {
               act('modify', `我要改一下「${payload.title || stage}」：`, '已发送 —— 直接接着说你要改哪一处')
             }}
           >
-            ✏️ 我要改一下
+            {answered === 'modify' ? '已说要改 ✓' : '✏️ 我要改一下'}
           </button>
           {payload.can_skip !== false ? (
             <button
               className="secondary-btn"
               data-vf-gate-act="skip"
-              disabled={sentAct !== null}
+              disabled={locked || sentAct !== null}
               onClick={() => {
                 act('skip', `跳过这一步：${stage || payload.title || ''}`, '已发送，这一步跳过。')
               }}
             >
-              ⏭ 这步跳过
+              {answered === 'skip' ? '已跳过 ✓' : '⏭ 这步跳过'}
             </button>
           ) : null}
         </div>
+
+        {running && answered === null ? (
+          <div className="agent-gate-doing">
+            这一轮还没结束 —— 等它结束再点，或者直接在对话里说「确认：{stage || payload.title || ''}」。
+          </div>
+        ) : null}
+        {answered !== null && sentAct === null ? (
+          <div className="agent-gate-doing">这一步你已经表过态了（{answered}），不再重复问。</div>
+        ) : null}
 
         {tweaks.length ? (
           <div className="agent-gate-tweaks">

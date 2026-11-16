@@ -1,17 +1,19 @@
 /** VideoForge conversation cards: one keyed toolview per `vf_*` Tool. */
-import { createElement } from 'react'
+import { createElement, useSyncExternalStore } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { VfToolRow, type VfCardActions } from './VfCard.tsx'
 
 export { VfToolRow, GateCard, ProgressCard, ArtifactCard, readPayload, vfMoney, COST_LABEL } from './VfCard.tsx'
 export type { VfCardPayload, VfCardActions, VfMedia } from './VfCard.tsx'
 
-/** Required services: slot registry + the session tracker that turns an id into a session scope. */
-export const inject = ['slots', 'sessions']
+/** Required services: slot registry, the session tracker, and the session status (running/not). */
+export const inject = ['slots', 'sessions', 'uiSession']
 
 /**
  * Tool names this bundle renders with a VideoForge card.
@@ -66,8 +68,22 @@ export function apply(ctx: ClientContext): void {
       inject: (sessionId: string): { actions: VfCardActions } => {
         const actx = sessions.scope(sessionId)
         const conversation = actx?.get('conversation') as { send: (text: string) => Promise<void> } | undefined
+        // ★ 2026-10-26：这一轮**还在跑**吗？
+        //   用户实机：「点了确认，当前会话还没结束」—— 提案卡是在这一轮还没结束时贴出来的。
+        //   卡片用它把按钮锁住，并提示"等它结束再点 / 或直接在对话里说确认"。
+        //   subscribe/getSnapshot 建一次就固定（组件里是 useSyncExternalStore，要求快照稳定）。
+        const status = ctx.uiSession?.sessionStatus
+        const subscribe = (onChange: () => void): (() => void) => (
+          status ? status.subscribe(onChange) : () => {}
+        )
+        const getSnapshot = (): boolean => {
+          if (!status) return false
+          return status.getSnapshot().get(sessionId as SessionId)?.running === true
+        }
         return {
           actions: {
+            sessionId,
+            useRunning: () => useSyncExternalStore(subscribe, getSnapshot),
             send: (text: string): void => {
               if (conversation === undefined) {
                 console.error('[vf-cards] 找不到该会话的 conversation 服务，sessionId=', sessionId)

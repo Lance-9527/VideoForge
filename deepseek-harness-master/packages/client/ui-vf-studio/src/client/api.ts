@@ -143,104 +143,25 @@ export interface RemakeResult {
   compliance?: { can_replicate?: string[]; must_not_replicate?: string[] }
 }
 
-export interface PlatformBrief {
-  id: string
-  name: string
-  duration?: { min?: number; max?: number } | null
-  aspect?: string
-  resolution?: string
-  basis?: string
-}
 
-export interface CategoryBrief {
-  id: string
-  name: string
-  beats?: string[]
-  basis?: string
-}
 
-export interface PlatformCheck {
-  id: string
-  title: string
-  level: 'pass' | 'fail' | 'unknown' | string
-  detail: string
-}
 
-export interface ComplianceHit {
-  term: string
-  severity: 'error' | 'warn' | string
-  category: string
-  why?: string
-}
 
-export interface SellingPointRewrite {
-  original: string
-  kind: string
-  rewritten: string
-  changed?: boolean
-  shootable?: boolean
-  why?: string
-}
 
-export interface EcomPlan {
-  ok?: boolean
-  product?: string
-  platform?: { id?: string; name_zh?: string }
-  category?: { id?: string; name_zh?: string }
-  target_duration?: number
-  beats?: Array<{ beat: string; start: number; end: number }>
-  scenes?: Array<{
-    scene_number: number
-    title: string
-    beat: string
-    duration_seconds: number
-    actions?: string[]
-    dialogues?: Array<{ character?: string; text?: string }>
-    must_not?: string[]
-  }>
-  compliance?: { errors?: number; warnings?: number; score?: number; hits?: ComplianceHit[] }
-  platform_check?: { checks?: PlatformCheck[] }
-  ai_label?: {
-    choice?: string
-    enabled?: boolean
-    text?: string
-    warning?: string
-    next_step?: string
-    manual_steps?: Array<{ kind: string }>
-  }
-  selling_point_rewrite?: { changed?: number; items?: SellingPointRewrite[]; still_vague?: string[] }
-  selling_points?: string[]
-  selling_points_raw?: string[]
-  warnings?: string[]
-}
 
-export interface AiLabelPlan {
-  ok?: boolean
-  checklist?: { mandatory?: boolean; effective_from?: string; must_do?: string[]; note?: string }
-  plan?: {
-    font?: string
-    font_available?: boolean
-    steps?: Array<{ layer: string; kind: string; text?: string; detail?: string }>
-  }
-  layers_done?: string[]
-  out_path?: string
-  sidecar?: string
-  manual_steps?: Array<{ layer?: string; kind: string; note?: string }>
-  metadata?: { comment?: string }
-  size_kb?: number
-}
 
 /* ───────────────────────── 接口 ───────────────────────── */
 
+/**
+ * VideoForge 创作工坊的 sidecar 客户端。
+ *
+ * ★ 2026-11-03：**电商相关的方法与类型已搬去「掌柜 AI」**
+ *   （`packages/client/ui-shop-brand/src/client/api.ts`），这里只剩「视频复刻」。
+ */
 export const api = {
-  /** 自检：ffmpeg / ASR Key / 风格档 / 平台数 / 品类数 */
+  /** 自检：ffmpeg / ASR Key / 风格档 */
   remakeStatus: () => getJson<ServiceStatus>('/api/remake/status'),
-  ecommerceStatus: () => getJson<ServiceStatus>('/api/ecommerce/status'),
 
-  /** 平台 + 品类清单（下拉框用） */
-  platforms: () => getJson<{ ok?: boolean; platforms?: PlatformBrief[]; categories?: CategoryBrief[] }>(
-    '/api/ecommerce/platforms',
-  ),
 
   /**
    * 视频复刻。`dry_run=true` 只估算（不花钱、不动文件）；
@@ -255,41 +176,4 @@ export const api = {
     max_shots?: number
   }) => postJson<RemakeResult>('/api/remake/analyze', body, 30 * 60 * 1000),
 
-  /** 电商方案 */
-  ecomPlan: (body: {
-    product: string
-    platform?: string
-    category?: string
-    selling_points?: string[]
-    audience?: string
-    duration_sec?: number
-    price_line?: string
-    ai_label?: string
-  }) => postJson<EcomPlan>('/api/ecommerce/plan', body),
-
-  /** 文案合规体检 */
-  ecomAudit: (text: string) =>
-    postJson<{ ok?: boolean; score?: number; errors?: number; warnings?: number; hits?: ComplianceHit[] }>(
-      '/api/ecommerce/audit',
-      { text },
-    ),
-
-  /** 卖点 → 可拍摄画面 */
-  ecomPoints: (selling_points: string[]) =>
-    postJson<{ ok?: boolean; items?: SellingPointRewrite[]; changed?: number; still_vague?: string[] }>(
-      '/api/ecommerce/selling-points',
-      { selling_points },
-    ),
-
-  /**
-   * AI 内容标识（**可选项**）。
-   * apply=false：只出清单与方案，不动文件。
-   * apply=true ：真烧进画面 + 写元数据（重编码，耗时随片长）。
-   */
-  aiLabel: (body: {
-    video_path?: string
-    apply?: boolean
-    mode?: string
-    start_seconds?: number
-  }) => postJson<AiLabelPlan>('/api/ecommerce/ai-label', body, 30 * 60 * 1000),
 }

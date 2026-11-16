@@ -1,0 +1,28 @@
+# @deepseek-ai/dsh-shop-agent —— 掌柜 AI bundle 层
+#
+# 这是一层 patch（不是完整 composition）：叠加在 `dsh-base` + `dsh-web-app` 之上，
+# 由 profile 的 `dsh.profile.bundles` 顺序决定先后；**同一行以最后写入者为准**。
+#
+# 掌柜 AI 是**独立应用**（2026-11-03 从 VideoForge 抽出来的电商 agent 应用）：
+# 它的 profile 里挂的是本 bundle，而不是 `@deepseek-ai/dsh-vf-video`，
+# 所以 VideoForge 的品牌位 / 创作工坊 / 无限画布都不会被加载 —— 两个应用互不干扰。
+
+# ① 插入掌柜 AI 的工具行（注册 shop_* 工具给 agent）。
+#    config 会原样传给 lib/index.js 的 apply(ctx, config)。
+- insert:
+    - id: shop-agent
+      name: '@deepseek-ai/dsh-shop-agent'
+      config:
+        # 本机 Python sidecar（Electron 主进程拉起），端口 8767 —— 掌柜 AI 专用，与 VideoForge 的 8765 分开。
+        baseUrl: 'http://127.0.0.1:8767'
+
+# ② 插入掌柜 AI 的壳（client bundle）：
+#    品牌位 + 左栏（AI 对话 / 电商 / 棚拍）+ 主区面板（电商工作台 / 棚拍）。
+- insert:
+    - id: ui-shop-brand
+      name: '@deepseek-ai/dsh-client-ui-shop-brand'
+
+# ③ 关掉官方品牌占位：ui-brand-official 在 DSH_CLIENT_BUILD_PROFILE=official 时注册，
+#    不关掉就会和掌柜 AI 的品牌抢 sidebar.brand.*（single 槽，priority 最低者渲染）。
+- id: ui-brand-official
+  disabled: true

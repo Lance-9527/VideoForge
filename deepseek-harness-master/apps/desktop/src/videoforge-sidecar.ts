@@ -22,12 +22,20 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
+import { currentBrand, type DesktopBrand } from './brand.ts'
 
 /** Sidecar 的数据库文件名（与 `backend/core/data_root.py` 一致）。 */
 const DB_FILENAME = 'videoforge.db'
 
-/** 用户安装版的业务数据目录名（与 Python 侧 `APP_NAME` 一致）。 */
-const APP_NAME = 'VideoForge'
+/**
+ * 用户安装版的业务数据目录名（与 Python 侧 `APP_NAME` 一致）。
+ *
+ * ★ 跟着品牌走：掌柜 AI 的 sidecar 数据必须落在 `%LOCALAPPDATA%\ShopSteward\data`，
+ *   否则两个应用会共用同一份 videoforge.db（用户会看到对方的项目）。
+ */
+function appDataName(): string {
+  return currentBrand().dataDirName
+}
 
 /** 默认端口（与 `backend/main.py` 的 `VIDEOFORGE_PORT` 默认值一致）。 */
 const DEFAULT_PORT = 8765
@@ -98,7 +106,7 @@ export function resolveSidecarDataDir(
   localAppData: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): { readonly dataDir: string; readonly hasExistingLibrary: boolean } {
-  const packagedDataDir = join(localAppData, APP_NAME, 'data')
+  const packagedDataDir = join(localAppData, appDataName(), 'data')
   const explicit = (environment.DSH_DESKTOP_VIDEOFORGE_DATA_DIR ?? environment.VIDEOFORGE_DATA_DIR ?? '').trim()
   if (explicit !== '' && isAbsolute(explicit)) {
     return { dataDir: explicit, hasExistingLibrary: hasLibrary(explicit) }
@@ -106,6 +114,29 @@ export function resolveSidecarDataDir(
   const ownDataDir = join(backendDir, 'data')
   if (hasLibrary(ownDataDir)) return { dataDir: ownDataDir, hasExistingLibrary: true }
   return { dataDir: packagedDataDir, hasExistingLibrary: hasLibrary(packagedDataDir) }
+}
+
+/**
+ * 解析 sidecar 的监听端口。
+ *
+ * ★ 品牌端口优先于环境变量。
+ *   `VIDEOFORGE_PORT` 只对**默认的 VideoForge 品牌**生效 —— 它的品牌目录里没有
+ *   `sidecarPort`，所以仍可用这个变量改端口（开发排障用）。
+ *   掌柜 AI 的端口写在品牌目录里（8767），**不受这个变量影响**：
+ *   否则机器上残留的一条 `VIDEOFORGE_PORT` 会把电商/资产/splat/命令队列
+ *   全部指向一个没人监听的端口，整条线静默失败（2026-11-04 实测）。
+ *
+ * @param brand - 当前品牌。
+ * @param environment - 进程环境变量。
+ * @returns 监听端口。
+ */
+export function resolveSidecarPort(
+  brand: DesktopBrand = currentBrand(),
+  environment: NodeJS.ProcessEnv = process.env,
+): number {
+  if (brand.sidecarPort !== undefined) { return brand.sidecarPort }
+  const configured = Number(environment.VIDEOFORGE_PORT ?? DEFAULT_PORT)
+  return Number.isSafeInteger(configured) && configured > 0 && configured < 65_536 ? configured : DEFAULT_PORT
 }
 
 /**
@@ -131,7 +162,9 @@ export function resolveVideoForgeSidecar(
   environment: NodeJS.ProcessEnv = process.env,
 ): VideoForgeSidecarResolution {
   const host = environment.VIDEOFORGE_HOST ?? '127.0.0.1'
-  const port = Number(environment.VIDEOFORGE_PORT ?? DEFAULT_PORT)
+  // ★ 端口跟着品牌走：VideoForge 8765 / 掌柜 AI 8767。
+  //   相同端口 → 两个应用不能同时开（第二个的 sidecar 起不来）。
+  const port = resolveSidecarPort(currentBrand(), environment)
 
   // 随包载荷可能落在两个位置：
   //   ① `resources/videoforge-sidecar`（正确位置；electron-builder `extraResources`）

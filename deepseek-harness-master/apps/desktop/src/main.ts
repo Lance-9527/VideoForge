@@ -25,11 +25,14 @@ import {
 import { resolveDesktopPaths } from './paths.ts'
 import { DesktopProjectManager } from './project-manager.ts'
 import { DesktopHostFatalError, DesktopHostProcess, DesktopHostUncleanExitError } from './host-process.ts'
-import { resolveVideoForgeSidecar, VideoForgeSidecar } from './videoforge-sidecar.ts'
+import { resolveVideoForgeSidecar, VideoForgeSidecar, type VideoForgeSidecarResolution } from './videoforge-sidecar.ts'
+import { currentBrand } from './brand.ts'
+import { applyBrandName } from './brand-locale.ts'
 import { seedVideoForgeHome } from './videoforge-seed.ts'
 import { VideoForgeStudioBridge } from './videoforge-studio.ts'
 import { DesktopPlatformView, PLATFORM_IPC, platformBounds } from './platform-view.ts'
 import { installDesktopDirectoryPicker } from './directory-picker.ts'
+import { startModelServer } from './model-server.ts'
 import { installMicrophonePermissions } from './microphone-permissions.ts'
 import { DesktopBackendController } from './backend-controller.ts'
 import { DESKTOP_IPC, SCHEME, assertDesktopSender, type DesktopUpdateState } from './ipc.ts'
@@ -88,7 +91,11 @@ const rendererConsole = new RendererConsoleTail()
 app.setAppLogsPath()
 
 function currentDesktopLocale(): ReturnType<typeof resolveDesktopLocale> {
-  return resolveDesktopLocale(windowsLanguage ?? app.getLocale())
+  // ★ 文案里的 `{appName}` 在这里填成当前品牌的名字 ——
+  //   系统菜单、托盘提示、about 面板、欢迎页、更新提示全都跟着品牌走，
+  //   掌柜 AI 不会在系统菜单里显示成 "VideoForge"。
+  const resolved = resolveDesktopLocale(windowsLanguage ?? app.getLocale())
+  return { id: resolved.id, messages: applyBrandName(resolved.messages) }
 }
 /** Quit without the task confirmation; the caller has already decided the application must stop. */
 function quitWithoutConfirmation(): void {
@@ -217,7 +224,7 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
     show,
     // ★ 品牌窗口标题：任务栏缩略图 / Alt-Tab 显示的就是它（客户端 document.title 也会覆盖，
     //   但首帧渲染前和未加载页面时要有兜底，否则会闪出 "DeepSeek Harness"）。
-    title: 'VideoForge',
+    title: currentBrand().appName,
     ...(process.platform === 'win32' && primary ? {
       titleBarStyle: 'hidden' as const,
       titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT, color: chromeFallbackFill(),
@@ -242,6 +249,12 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
       webSecurity: true,
       webviewTag: primary,
       devTools: true,
+      // ★ 3D 视口不能因为窗口被遮挡就停摆。
+      //   Chromium 默认对不可见窗口节流 requestAnimationFrame ⇒ PlayCanvas 的
+      //   渲染循环停住（frame 不再增长）、'update' 事件不触发 ⇒
+      //   相机/灯光/手柄的改动全部不生效，录制的视频也是空的。
+      //   实测：把窗口切到后台再切回来，画面就停在旧帧。
+      backgroundThrottling: false,
     },
   })
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -341,10 +354,13 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
 //      和免安装启动器 `VideoForge.cmd`、以及验收要求的
 //      `%LOCALAPPDATA%\VideoForge\{electron,dsh}` 不一致）。
 {
+  // ★ 品牌可切换（videoforge / shop）：数据根必须跟着品牌走，
+  //   否则两个应用抢同一个 %LOCALAPPDATA% 目录（Chromium 缓存会互撞）。
+  const brand = currentBrand()
   const ownRoot = process.platform === 'win32'
     && typeof process.env.LOCALAPPDATA === 'string' && process.env.LOCALAPPDATA !== ''
-    ? join(process.env.LOCALAPPDATA, 'VideoForge')
-    : join(app.getPath('appData'), 'VideoForge')
+    ? join(process.env.LOCALAPPDATA, brand.dataDirName)
+    : join(app.getPath('appData'), brand.dataDirName)
   const ownUserData = join(ownRoot, 'electron')
   const ownDshHome = join(ownRoot, 'dsh')
   try {
@@ -355,12 +371,12 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
     app.setPath('sessionData', ownUserData)
 
     const inherited = (process.env.DSH_HOME ?? '').trim()
-    const keepInherited = process.env.VIDEOFORGE_KEEP_DSH_HOME === '1'
+    const keepInherited = process.env[brand.keepDshHomeEnv] === '1'
     const inheritedIsOurs = inherited !== ''
       && (inherited === ownRoot || inherited.startsWith(`${ownRoot}\\`) || inherited.startsWith(`${ownRoot}/`))
     if (!keepInherited && !inheritedIsOurs) {
       if (inherited !== '') {
-        console.warn(`VideoForge: 忽略继承的 DSH_HOME=${inherited}（它指向用户环境）；改用 ${ownDshHome}`)
+        console.warn(`${brand.appName}: 忽略继承的 DSH_HOME=${inherited}（它指向用户环境）；改用 ${ownDshHome}`)
       }
       process.env.DSH_HOME = ownDshHome
     }
@@ -374,13 +390,13 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
     const seedResources = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
     const seeded = seedVideoForgeHome(process.env.DSH_HOME ?? ownDshHome, seedResources)
     if (seeded.written.length > 0) {
-      console.info(`VideoForge: 首启种子已写入 ${seeded.written.join(', ')}（${process.env.DSH_HOME ?? ownDshHome}）`)
+      console.info(`${brand.appName}: 首启种子已写入 ${seeded.written.join(', ')}（${process.env.DSH_HOME ?? ownDshHome}）`)
     }
     if (seeded.problem !== undefined) {
-      console.warn(`VideoForge: ${seeded.problem}`)
+      console.warn(`${brand.appName}: ${seeded.problem}`)
     }
   } catch (error) {
-    console.warn('VideoForge: 设置独立数据目录失败，沿用默认路径', error)
+    console.warn('设置独立数据目录失败，沿用默认路径', error)
   }
 }
 
@@ -390,6 +406,21 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
  * 应用退出时用它把子进程收掉 —— 不留僵尸占着 8765 端口。
  */
 let videoForgeSidecar: VideoForgeSidecar | undefined
+/**
+ * sidecar 的落点（端口跟品牌走）。
+ *
+ * 解析一次就够：端口是**品牌决定的**，不是运行时才知道的 ——
+ * 客户端要的就是这个端口，不该自己硬编码。
+ */
+let videoForgeSidecarLayout: VideoForgeSidecarResolution | undefined
+/**
+ * 本地服务地址 —— **渲染器不许硬编码端口**，一律来这里取。
+ *
+ * · `sidecarBase`：sidecar 基址（掌柜 AI 8767，跟品牌走）。
+ * · `depthRuntimeBase`：模型运行时基址（默认 8791，被占用时顺延 ⇒ 真实端口
+ *   只有主进程知道，必须如实告诉渲染器，否则会静默退化成启发式深度）。
+ */
+const localServiceEndpoints = { sidecarBase: '', depthRuntimeBase: '' }
 /**
  * 「Blender 场景工作台」的 MCP 桥。
  *
@@ -405,6 +436,27 @@ let videoForgeStudio: VideoForgeStudioBridge | undefined
 let videoForgeQuitting = false
 
 /**
+ * 解析 sidecar 的落点（端口跟品牌走）。
+ *
+ * ★ 解析失败**不能打断启动**：拿不到端口时客户端会退回默认端口，
+ *   而启动期的其它错误（例如未打包形态缺少运行时目录）必须照常报出来。
+ *
+ * @returns sidecar 落点；解析不了时是 `undefined`。
+ */
+function resolveSidecarLayout(): VideoForgeSidecarResolution | undefined {
+  try {
+    return resolveVideoForgeSidecar(
+      app.isPackaged,
+      process.resourcesPath,
+      process.env.LOCALAPPDATA ?? app.getPath('appData'),
+    )
+  } catch (error) {
+    console.warn('VideoForge: sidecar 落点解析失败', error)
+    return undefined
+  }
+}
+
+/**
  * 拉起 VideoForge 视频服务；失败只给一句人话，不打断应用启动。
  *
  * ★ 为什么失败不抛：sidecar 挂掉不该让整个桌面端起不来。
@@ -412,11 +464,15 @@ let videoForgeQuitting = false
  * @returns sidecar 是否健康。
  */
 async function startVideoForgeSidecar(): Promise<boolean> {
-  const layout = resolveVideoForgeSidecar(
-    app.isPackaged,
-    process.resourcesPath,
-    process.env.LOCALAPPDATA ?? app.getPath('appData'),
-  )
+  const layout = videoForgeSidecarLayout ?? resolveSidecarLayout()
+  videoForgeSidecarLayout = layout
+  if (layout !== undefined) {
+    localServiceEndpoints.sidecarBase = `http://${layout.host}:${layout.port}`
+  }
+  if (layout === undefined) {
+    console.warn('VideoForge: 视频服务落点未知，跳过启动')
+    return false
+  }
   if (layout.problem !== undefined) {
     console.warn(`VideoForge: ${layout.problem}`)
     void showVideoForgeSidecarProblem(layout.problem)
@@ -485,6 +541,13 @@ async function stopVideoForgeSidecar(): Promise<boolean> {
 
 async function main(): Promise<void> {
   const desktopSettings = readDesktopSettings(app.getPath('userData'))
+  // ★ sidecar 端口在这里定下来（品牌决定：掌柜 AI 8767 / VideoForge 8765）。
+  //   渲染器随后通过 `DESKTOP_IPC.localServices` 读到它 ——
+  //   客户端各处硬编码端口，一改就全线静默失败（2026-11-04 实测）。
+  videoForgeSidecarLayout = resolveSidecarLayout()
+  localServiceEndpoints.sidecarBase = videoForgeSidecarLayout === undefined
+    ? ''
+    : `http://${videoForgeSidecarLayout.host}:${videoForgeSidecarLayout.port}`
   void pruneCrashReports(app.getPath('logs'))
   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
   const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
@@ -625,13 +688,14 @@ async function main(): Promise<void> {
         // 「Blender 场景工作台」保留为 **MCP 能力**（界面入口已按 lance 要求移除）。
         // 起不来只记一条日志，不阻塞应用启动。
         if (videoForgeStudio === undefined) {
-          const layout = resolveVideoForgeSidecar(app.isPackaged, process.resourcesPath,
-            process.env.LOCALAPPDATA ?? app.getPath('appData'))
-          videoForgeStudio = new VideoForgeStudioBridge(resources.node, layout.backendDir,
-            process.env.VIDEOFORGE_STUDIO_OUTPUT_DIR)
-          void videoForgeStudio.start().catch((error: unknown) => {
-            console.warn('VideoForge: 场景工作台 MCP 桥未就绪', error)
-          })
+          const layout = videoForgeSidecarLayout ?? resolveSidecarLayout()
+          if (layout !== undefined) {
+            videoForgeStudio = new VideoForgeStudioBridge(resources.node, layout.backendDir,
+              process.env.VIDEOFORGE_STUDIO_OUTPUT_DIR)
+            void videoForgeStudio.start().catch((error: unknown) => {
+              console.warn('VideoForge: 场景工作台 MCP 桥未就绪', error)
+            })
+          }
         }
         const ready = await host.start()
         // ★★ 2026-10-24 真实事故修复：清理堆积的 dsh-auth-* cookie。
@@ -988,6 +1052,15 @@ async function main(): Promise<void> {
     assertProductSender(event)
     return readDeviceInfo()
   })
+  // ★ 本地服务地址：sidecar 端口（品牌决定）与模型运行时端口（实际绑定结果）。
+  //   渲染器据此拼 URL —— 不再各处硬编码（2026-11-04 实测：端口一变就全线静默失败）。
+  ipcMain.handle(DESKTOP_IPC.localServices, (event) => {
+    assertProductSender(event)
+    return {
+      sidecarBase: localServiceEndpoints.sidecarBase,
+      depthRuntimeBase: localServiceEndpoints.depthRuntimeBase,
+    }
+  })
   ipcMain.handle(DESKTOP_IPC.onboardingApiKey, async (event) => {
     assertProductSender(event)
     return (await readWelcomeState()).hasApiKey
@@ -1143,7 +1216,7 @@ async function main(): Promise<void> {
   const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
     : join(process.resourcesPath, 'icon.png')
   app.setAboutPanelOptions({
-    applicationName: 'VideoForge',
+    applicationName: currentBrand().appName,
     applicationVersion: app.getVersion(),
     // The release has no separate build number; omit Electron's bundle version.
     version: '',
@@ -1153,7 +1226,7 @@ async function main(): Promise<void> {
   // ★ 2026-10-21（用户第 4 轮第 1 条）：任务栏/Alt-Tab 里显示的还是 "DeepSeek Harness"。
   //   这里把应用名统一成 VideoForge —— Electron 的任务栏条目、分组名、系统对话框标题
   //   都会跟着它变（产品化要求：整个软件只有一个品牌名）。
-  app.setName('VideoForge')
+  app.setName(currentBrand().appName)
   // A custom application menu replaces Electron's default menu, so macOS needs
   // its standard menus and application hide commands declared explicitly.
   // Keep app.name stable: Electron derives its default userData directory from it.
@@ -1203,7 +1276,11 @@ async function main(): Promise<void> {
     tray?.relabel()
   }
   refreshApplicationMenu()
-  const trayIconPath = development ? join(app.getAppPath(), 'resources', 'tray-windows.ico') : join(process.resourcesPath, 'tray.ico')
+  // ★ 托盘图标按品牌：掌柜 AI 用自己的算盘托盘图（默认是 VideoForge 的 V）。
+  const trayIconName = currentBrand().trayIcon ?? 'tray-windows.ico'
+  const trayIconPath = development
+    ? join(app.getAppPath(), 'resources', trayIconName)
+    : join(process.resourcesPath, 'tray.ico')
   if (process.platform === 'win32') {
     // The tray is the way back to a hidden window; without it, relaunching the application still focuses it.
     try {
@@ -1284,6 +1361,22 @@ async function main(): Promise<void> {
       window.hide()
     }
   }
+  // ★ 模型运行时服务：把 resources/models 与 resources/ort 伺服给渲染器
+  //   （Depth Anything V2 的 onnxruntime-web 在渲染器里跑，wasm 与模型不入 bundle）。
+  //   起不来也不致命 —— 客户端会自动降级到启发式深度，并显示原因。
+  //   ★ 真实端口写进 `localServiceEndpoints`：端口被占用时会顺延，
+  //   渲染器必须知道真实端口（否则深度模型永远加载不上）。
+  void startModelServer(app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources'))
+    .then((server) => {
+      localServiceEndpoints.depthRuntimeBase = `http://127.0.0.1:${server.port}`
+      console.info(`${currentBrand().appName}: 模型运行时服务已启动 ${localServiceEndpoints.depthRuntimeBase}`)
+      app.on('will-quit', () => { server.close() })
+    })
+    .catch((error: unknown) => {
+      localServiceEndpoints.depthRuntimeBase = ''
+      console.error(`${currentBrand().appName}: 模型运行时服务未启动（深度将用启发式）:`, error)
+    })
+
   const createMainWindow = (): BrowserWindow => {
     const window = createWindow(appPreload, false, true)
     mainWindow = window

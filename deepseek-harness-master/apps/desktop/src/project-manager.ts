@@ -22,14 +22,14 @@ import {
 import type { DesktopPaths } from './paths.ts'
 import type { DesktopRelease } from './release.ts'
 import { readDesktopRuntime } from './runtime-tree.ts'
+import { currentBrand } from './brand.ts'
 import {
-  initProfile, PROFILE_TEMPLATES, removeLinkProjections, sanitizeProfile, type ProfileTemplate,
+  initProfile, removeLinkProjections, sanitizeProfile,
 } from '@deepseek-ai/dsh-app-boot'
 
 const PROJECT_NAME = '@deepseek-ai/dsh-desktop-runtime'
 const DSH_PACKAGE = '@deepseek-ai/dsh'
 const CORE_BUILD_PACKAGE = '@deepseek-ai/dsh-subprocess-local'
-const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate
 /**
  * VideoForge（2026-10-21）：**打包出来的 app 默认就带我们自己的 bundle**。
  *
@@ -40,7 +40,13 @@ const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate
  *
  * 恢复路径（sanitizeProfile）也用这份列表，避免"恢复"把我们的 bundle 摘掉。
  */
-const VF_PROFILE_BUNDLES: readonly string[] = [...WEB_PROFILE.bundles, '@deepseek-ai/dsh-vf-video']
+/**
+ * ★ 品牌决定加载哪些 bundle（videoforge → vf-video；shop → shop-agent）。
+ *   两个应用必须各挂各的：挂错会让对方的品牌位/工具出现在这个应用里。
+ */
+function profileBundles(): readonly string[] {
+  return currentBrand().bundles
+}
 const WORKSPACE_SETTINGS = 'nodeLinker: hoisted\nautoInstallPeers: false\n'
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, undefined, 2)}\n`, { mode: 0o600 })
@@ -85,7 +91,7 @@ export class DesktopProjectManager {
    * @returns Backup path after the locked profile write, or undefined if the patch was absent.
    */
   async disableAllPlugins(): Promise<string | undefined> {
-    return this.withLock(() => sanitizeProfile('dsh', this.paths.profile, VF_PROFILE_BUNDLES))
+    return this.withLock(() => sanitizeProfile('dsh', this.paths.profile, profileBundles()))
   }
 
   /**
@@ -150,7 +156,7 @@ export function createRuntimeProjectMetadata(projectDir: string, release: Deskto
     private: true,
     version: '0.0.0',
     dependencies: desktopCorePackageOverrides(packageSet),
-    dsh: { profile: { bundles: [...VF_PROFILE_BUNDLES] } },
+    dsh: { profile: { bundles: [...profileBundles()] } },
   }
   writeJson(join(projectDir, 'package.json'), manifest)
   writeFileSync(
@@ -175,7 +181,7 @@ export function createDevelopmentProjectMetadata(projectDir: string, release: De
       [DSH_PACKAGE]: release.version,
       [DESKTOP_HOST_PACKAGE]: release.version,
     },
-    dsh: { profile: { bundles: [...VF_PROFILE_BUNDLES] } },
+    dsh: { profile: { bundles: [...profileBundles()] } },
   }
   writeJson(join(projectDir, 'package.json'), manifest)
   writeFileSync(join(projectDir, 'pnpm-workspace.yaml'), workspaceFile(), { mode: 0o600 })
@@ -183,5 +189,5 @@ export function createDevelopmentProjectMetadata(projectDir: string, release: De
 
 /** Create the first external plugin profile without running a package manager. */
 export function createPluginProfile(projectDir: string): void {
-  initProfile(projectDir, [...VF_PROFILE_BUNDLES])
+  initProfile(projectDir, [...profileBundles()])
 }

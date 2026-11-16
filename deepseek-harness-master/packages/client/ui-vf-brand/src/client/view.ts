@@ -8,8 +8,8 @@
  */
 import { useSyncExternalStore } from 'react'
 
-/** 左栏三段的标识（与旧版 VideoForge 一致）。 */
-export type VfSection = 'chat' | 'assets' | 'post'
+/** 左栏各段的标识（与旧版 VideoForge 一致）。 */
+export type VfSection = 'chat' | 'assets' | 'post' | 'canvas'
 
 /** 当前视图：哪一段 + 选中的项目。 */
 export interface VfView {

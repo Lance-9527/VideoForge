@@ -26,6 +26,7 @@ import { resolveDesktopPolicyEnvironment } from './desktop-policy-environment.mj
 import { desktopArtifactOutput, desktopTargetBuildPaths, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
 import { installWindowsDirectoryInstaller } from './windows-directory-installer.mjs'
 import { preserveWindowsRuntimeSignature, signWindowsCode } from './windows-runtime-signature.mjs'
+import { verifyModelPayload } from './model-payload.mjs'
 import { prepareWindowsAsarUnpack, verifyWindowsAsarUnpack } from './windows-asar-unpack.mjs'
 import { recordPackagingEvent } from './packaging-run.mjs'
 
@@ -61,6 +62,25 @@ import {
 } from './macos-app-update-config.mjs'
 
 /**
+ * 解析当前打包的品牌。
+ *
+ * 品牌目录在 `resources/brands.json`；`DSH_DESKTOP_BRAND` 选 id。
+ * 未知 id 直接抛错 —— 打错品牌的包比打不出来更糟。
+ *
+ * @param {Record<string, string | undefined>} env - 进程环境。
+ * @returns {{ id: string, appName: string, productName: string, artifactPrefix: string, dataDirName: string, icon: string, bundles: string[], keepDshHomeEnv: string }} 品牌。
+ */
+function resolveDesktopBrand(env) {
+  const catalog = JSON.parse(readFileSync(fileURLToPath(new URL('../resources/brands.json', import.meta.url)), 'utf8'))
+  const id = env.DSH_DESKTOP_BRAND ?? 'videoforge'
+  const brand = catalog.brands?.[id]
+  if (brand === undefined) {
+    throw new Error(`desktop package: 未知品牌 "${id}"（可选：${Object.keys(catalog.brands ?? {}).join(', ')}）`)
+  }
+  return brand
+}
+
+/**
  * Create electron-builder configuration from one release environment.
  * @param {NodeJS.ProcessEnv} env - Packaging environment.
  * @param {NodeJS.Platform} hostPlatform - Build-host platform used when no explicit target is present.
@@ -76,7 +96,9 @@ export function createElectronBuilderConfig(
   preparedRuntime = undefined,
   preparedRuntimeVersion = undefined,
 ) {
-  const appId = resolveDesktopAppId(env)
+  // ★ 品牌先解析：appId / productName / artifactName / 图标都跟着它走。
+  const brand = resolveDesktopBrand(env)
+  const appId = brand.appId ?? resolveDesktopAppId(env)
   const targetPlatform = env.DSH_DESKTOP_TARGET_PLATFORM
   const resolvedPlatform = targetPlatform ?? hostPlatform
   const resolvedArch = env.DSH_DESKTOP_TARGET_ARCH ?? hostArch
@@ -125,6 +147,8 @@ export function createElectronBuilderConfig(
   if (preparedRuntime !== undefined) buildPaths.dsh = preparedRuntime
   // electron-builder merges extraMetadata into the packaged manifest, so a build version here reaches
   // the artifact names, the update feed, and the installed app.getVersion() the updater compares against.
+  // ★ 品牌（videoforge / shop）：productName 决定 exe 名，artifactName 决定产物名，
+  //   icon 决定应用图标。由 package-target.ts --brand <id> 注入 DSH_DESKTOP_BRAND。
   const productVersion = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version
   const buildVersion = resolveDesktopBuildVersion(env, productVersion)
   if (update?.channel === 'latest' && buildVersion.includes('-')) throw new Error('desktop package: latest requires a stable version')
@@ -139,9 +163,9 @@ export function createElectronBuilderConfig(
       ...buildVersion === productVersion ? {} : { version: buildVersion },
       ...packaged === undefined ? {} : { dshBuildCommit: packaged.commit, dshBuildDirty: packaged.dirty },
     },
-    productName: 'VideoForge',
+    productName: brand.productName,
     // Unsigned builds carry their own suffix so a shared file can never pass for a release artifact.
-    artifactName: `videoforge-\${version}-\${os}-\${arch}${output.suffix}.\${ext}`,
+    artifactName: `${brand.artifactPrefix}-\${version}-\${os}-\${arch}${output.suffix}.\${ext}`,
     directories: { output: output.directory },
     asar: true,
     electronDist: buildPaths.electron,
@@ -184,13 +208,15 @@ export function createElectronBuilderConfig(
     ...(packagesWindows
       ? {
           extraFiles: [
-            { from: fileURLToPath(new URL('../resources/win/VideoForge.cmd', import.meta.url)), to: 'VideoForge.cmd' },
+            { from: fileURLToPath(new URL(`../resources/win/${brand.productName}.cmd`, import.meta.url)), to: `${brand.productName}.cmd` },
           ],
         }
       : {}),
     extraResources: [
       { from: buildPaths.runtime, to: 'runtime' },
-      { from: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
+      { from: fileURLToPath(new URL(`../resources/${brand.icon}`, import.meta.url)), to: 'icon.png' },
+      // ★ 品牌解析结果（主进程据此决定标题/数据目录/profile 组合）。
+      { from: fileURLToPath(new URL('../resources/brand.json', import.meta.url)), to: 'brand.json' },
       // ★ VideoForge 视频服务（Python sidecar，2026-10-21）。
       //   **必须放 resources/**：桌面端按 `join(process.resourcesPath, 'videoforge-sidecar')`
       //   找它（见 src/videoforge-sidecar.ts）。放 extraFiles 会落到 app 根目录，
@@ -203,11 +229,16 @@ export function createElectronBuilderConfig(
       //   没有它，装出来的应用打开就是"能看不能说话"——模型选择器空着。
       //   读取方与写入规则见 `src/videoforge-seed.ts`；只在缺文件或空壳时写入。
       { from: fileURLToPath(new URL('../resources/videoforge-seed', import.meta.url)), to: VIDEOFORGE_SEED_DIR_NAME },
+      // ★ 模型运行时（Depth Anything V2 + onnxruntime-web 的 wasm）：
+      //   由主进程的本地静态服务伺服给渲染器（见 src/model-server.ts）。
+      //   不塞进 runtime/ —— 那棵树有 sha256 清单校验。
+      { from: fileURLToPath(new URL('../resources/models', import.meta.url)), to: 'models' },
+      { from: fileURLToPath(new URL('../resources/ort', import.meta.url)), to: 'ort' },
       // Windows tray bitmaps; macOS keeps the Dock and ships no menu bar icon.
-      ...(packagesWindows ? [{ from: fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),
+      ...(packagesWindows ? [{ from: fileURLToPath(new URL(`../resources/${brand.trayIcon ?? 'tray-windows.ico'}`, import.meta.url)), to: 'tray.ico' }] : []),
     ],
     mac: {
-      icon: fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
+      icon: fileURLToPath(new URL(`../resources/${brand.icon.replace('windows', 'macos')}`, import.meta.url)),
       category: 'public.app-category.developer-tools',
       // macOS matches the application locale against this bundle, not Electron Framework resources.
       extendInfo: { CFBundleLocalizations: ['en', 'zh_CN'] },
@@ -260,8 +291,19 @@ export function createElectronBuilderConfig(
           + `${sidecarDestinationFiles}/${sidecarSourceFiles} files in ${sidecarDestination}`)
       }
       console.log(`[videoforge] sidecar payload synced: ${sidecarDestinationFiles}/${sidecarSourceFiles} files`)
-      const { verifyDesktopRuntime } = await import('../lib/types/runtime-tree.js')
+      // ★ 2026-11-04：**模型运行时载荷（models/ + ort/）同样要强同步 + 核对**。
+      //   同一个坑（extraResources 拷贝漏文件且不报错）：少拷一个 12MB 的 wasm，
+      //   装好的应用里深度模型永远加载不上，用户只看到「深度 启发式」。
+      //   这里 cpSync 强同步一遍，再按**文件数与体积**核对：数量不足直接让打包失败。
       const resourcesDir = context.packager.getResourcesDir(context.appOutDir)
+      const modelPayloadSource = fileURLToPath(new URL('../resources', import.meta.url))
+      for (const name of ['models', 'ort']) {
+        cpSync(join(modelPayloadSource, name), join(resourcesDir, name), { recursive: true, force: true })
+      }
+      const modelPayload = verifyModelPayload(resourcesDir)
+      console.log(`[desktop] 模型运行时装载已同步并核对：`
+        + `models ${Object.keys(modelPayload.models).length} 个文件 / ort ${Object.keys(modelPayload.ort).length} 个文件`)
+      const { verifyDesktopRuntime } = await import('../lib/types/runtime-tree.js')
       if (resolvedPlatform === 'darwin' && update !== undefined) {
         await writeMacOSAppUpdateConfig(resourcesDir, resolveMacOSAppUpdateFeed(context.packager.config.publish),
           context.packager.appInfo.updaterCacheDirName)
@@ -303,7 +345,10 @@ export function createElectronBuilderConfig(
       )
     },
     win: {
-      icon: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)),
+      // ★ 按品牌取图标：这里原来写死 `icon-windows.png`（VideoForge 的 V），
+      //   导致第二个应用（掌柜 AI）的 exe 内嵌图标还是 V ——
+      //   桌面快捷方式 / 任务栏 / Alt-Tab 全都显示成别的应用的图标。
+      icon: fileURLToPath(new URL(`../resources/${brand.icon}`, import.meta.url)),
       forceCodeSigning: !unsigned,
       signtoolOptions: {
         sign: windowsSigner,
@@ -319,7 +364,7 @@ export function createElectronBuilderConfig(
     nsis: {
       installerSidebar: join(buildPaths.root, 'installer-ui', 'uninstaller-sidebar.bmp'),
       uninstallerSidebar: join(buildPaths.root, 'installer-ui', 'uninstaller-sidebar.bmp'),
-      include: fileURLToPath(new URL('./installer.nsh', import.meta.url)),
+      include: fileURLToPath(new URL(`./installer-${brand.id}.nsh`, import.meta.url)),
       oneClick: false,
       perMachine: false,
       allowElevation: false,

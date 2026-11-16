@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   desktopBuildRecordFilename,
   resolveDesktopAutoUpdateConfig,
@@ -201,6 +201,8 @@ interface DesktopPackageInvocation {
   readonly check: boolean
   /** Build identifier to publish under, when this build does not publish the product version. */
   readonly requestedBuildVersion: string | undefined
+  /** 品牌 id（videoforge / shop）—— 决定 exe 名、图标、数据目录、profile 组合。 */
+  readonly brand: string
 }
 
 function hostTargetName(platform: NodeJS.Platform, arch: string): DesktopPackageTargetName {
@@ -233,6 +235,7 @@ export function parseDesktopPackageInvocation(
       'skip-notarization': { type: 'boolean', default: false },
       check: { type: 'boolean', default: false },
       'build-version': { type: 'string' },
+      brand: { type: 'string' },
     },
   })
   if (positionals.length > 1) throw new Error('desktop package: expected at most one target')
@@ -253,6 +256,7 @@ export function parseDesktopPackageInvocation(
     skipNotarization: values['skip-notarization'],
     check: values.check,
     requestedBuildVersion,
+    brand: values.brand?.trim() ?? 'videoforge',
   }
 }
 
@@ -413,6 +417,73 @@ async function main(): Promise<void> {
  * @param run Persistent stage supervisor; required for signed Windows packaging and enabled for all release commands.
  * @returns Resolves after preparation or complete packaging; any failed stage prevents a release record.
  */
+
+/**
+ * 从品牌目录里取品牌定义。
+ *
+ * @param id - 品牌 id（videoforge / shop）。
+ * @returns 品牌定义（写进 resources/brand.json 的内容）。
+ */
+interface DesktopBrandDefinition {
+  readonly id: string
+  readonly appName: string
+  readonly productName: string
+  readonly artifactPrefix: string
+  readonly dataDirName: string
+  readonly icon: string
+  /**
+   * 应用 ID（Windows 的身份标识）。
+   *
+   * ★ 两个品牌必须不同 —— 相同的话 Windows 认为它们是同一个应用：
+   *   第二个装不进去（NSIS 退出码 2），而且卸载会互删。
+   */
+  readonly appId?: string
+  readonly bundles: readonly string[]
+  readonly keepDshHomeEnv: string
+}
+
+function resolveDesktopBrandCatalog(id: string): DesktopBrandDefinition {
+  const catalog = JSON.parse(readFileSync(join(APP_ROOT, 'resources', 'brands.json'), 'utf8')) as {
+    brands?: Record<string, DesktopBrandDefinition>
+  }
+  const brand = catalog.brands?.[id]
+  if (brand === undefined) {
+    throw new Error(`desktop package: 未知品牌 "${id}"（可选：${Object.keys(catalog.brands ?? {}).join(', ')}）`)
+  }
+  return brand
+}
+
+
+/**
+ * 按品牌生成 NSIS 安装器脚本与 Windows 免安装启动器。
+ *
+ * NSIS 的 include 是**构建期读文件**，没法注入变量 ⇒ 只能先生成一份品牌化的副本，
+ * 再让 electron-builder 的 `nsis.include` 指向它。
+ *
+ * @param brand - 品牌定义。
+ */
+function writeBrandInstallerFiles(brand: DesktopBrandDefinition): void {
+  const dataDir = brand.dataDirName
+  const product = brand.productName
+
+  // NSIS
+  const nshSource = readFileSync(join(APP_ROOT, 'scripts', 'installer.nsh'), 'utf8')
+  // ★ 必须生成到 **scripts/ 同目录**：installer.nsh 里有
+  //   `!include "${__FILEDIR__}\installer-directories.nsh"`（NSIS 的 __FILEDIR__ = 脚本所在目录）。
+  //   生成到别处会报「!include: error in script ... on line 230」。
+  const nshTarget = join(APP_ROOT, 'scripts', `installer-${brand.id}.nsh`)
+  mkdirSync(dirname(nshTarget), { recursive: true })
+  writeFileSync(nshTarget, nshSource.replaceAll('__BRAND_DATA_DIR__', dataDir), 'utf8')
+
+  // 免安装启动器（resources/win/<ProductName>.cmd）
+  // 模板单独放一个文件（_launcher.cmd）：产物 <ProductName>.cmd 也在这个目录里，
+  // 用产物当模板会串味（下一个品牌的 cmd 会带着上一个品牌的内容）。
+  const cmdSource = readFileSync(join(APP_ROOT, 'resources', 'win', '_launcher.cmd'), 'utf8')
+  const cmdTarget = join(APP_ROOT, 'resources', 'win', `${product}.cmd`)
+  writeFileSync(cmdTarget,
+    cmdSource.replaceAll('__BRAND_DATA_DIR__', dataDir).replaceAll('__BRAND_PRODUCT__', product), 'utf8')
+}
+
 export async function packageTarget(
   invocation: DesktopPackageInvocation,
   environment: NodeJS.ProcessEnv,
@@ -433,6 +504,20 @@ export async function packageTarget(
   const artifactsRoot = desktopArtifactOutput(buildPaths, invocation).directory
   const buildEnv = withoutWindowsSigningEnvironment(withoutDesktopUploadCredentials(
     desktopElectronBuilderEnvironment(environment, invocation.unsigned)))
+  // ★ 品牌（videoforge / shop）：把解析结果写进 resources/brand.json（随包发布），
+  //   并把 id 注入 electron-builder 的环境（配置里按 id 取 productName/图标/产物名）。
+  //   ★ 写盘前先校验 id 存在 —— 拼错品牌时必须立刻炸，不能默默打出"打错品牌的包"。
+  const brand = resolveDesktopBrandCatalog(invocation.brand)
+  writeFileSync(join(APP_ROOT, 'resources', 'brand.json'), `${JSON.stringify(brand, undefined, 2)}\n`, 'utf8')
+  // ★ 品牌化的安装器脚本与免安装启动器（NSIS 模板里没法用 JS 变量，只能生成）。
+  writeBrandInstallerFiles(brand)
+  buildEnv.DSH_DESKTOP_BRAND = brand.id
+  environment.DSH_DESKTOP_BRAND = brand.id
+  // ★ 每个品牌一个 appId：两个应用共存时 Windows 得能分清谁是谁
+  //   （相同 appId → 第二个装不上，且卸载互删）。
+  if (brand.appId !== undefined && brand.appId !== '') {
+    environment.DSH_DESKTOP_APP_ID = brand.appId
+  }
   const targetEnv: NodeJS.ProcessEnv = {
     ...buildEnv,
     DSH_DESKTOP_MACOS_SKIP_NOTARIZATION: invocation.skipNotarization ? '1' : '0',
@@ -441,6 +526,7 @@ export async function packageTarget(
   }
   const downloadEnv = macOSDownloadEnvironment(targetEnv, mac?.downloadProxy)
   const electronBuilderEnv = desktopElectronBuilderEnvironment(downloadEnv, invocation.unsigned)
+  electronBuilderEnv.DSH_DESKTOP_BRAND = buildEnv.DSH_DESKTOP_BRAND
   for (const name of WINDOWS_SIGNING_ENV_NAMES) {
     if (!invocation.unsigned && environment[name] !== undefined) electronBuilderEnv[name] = environment[name]
   }
@@ -473,8 +559,26 @@ export async function packageTarget(
         { cwd: APP_ROOT, env: electronBuilderEnv, timeoutMs: 60_000 })
     })
   }
+  // ★ 深度模型权重拉取（2026-11-16）：权重不在 npm 上，只在 HF 模型仓库里，
+  //   仓库不收这个 26MB 的二进制（`.gitignore` 排除了 `resources/models/`），
+  //   所以干净 checkout 之后得自己取回来 —— 按 sha256 校验，不对就重下。
+  await execute(['run', 'fetch:model-payload'], buildEnv, APP_ROOT)
+  // ★ 模型运行时资源预备（2026-11-04）：把 onnxruntime-web 的 dist 文件
+  //   确定地拷进 `resources/ort/`，并核对模型权重在位。
+  //   以前这些文件是手工从 pnpm store 拷进去的 —— 干净 checkout 打不出包。
+  await execute(['run', 'stage:models'], buildEnv, APP_ROOT)
   await execute(['run', 'build:official'], buildEnv, REPOSITORY_ROOT)
-  await execute(['run', 'release:pack', '--family', 'dsh', '--out', buildPaths.packedDsh, ...packArguments], buildEnv, REPOSITORY_ROOT)
+  if (run === undefined) throw new Error('desktop package: release:pack requires a supervised run')
+  // ★ 直接用 tsx 调 pack.ts，**不经过包管理器**。
+  //   经 pnpm/npm 转发参数时两条路都不通：
+  //     不带 `--` → `--family`/`--out` 被包管理器当成自己的配置吃掉
+  //                  （npm: "Unknown cli config --out"），pack.ts 只收到位置参数；
+  //     带 `--`   → 分隔符被原样保留，parseArgs 把 `--` 之后的 `--family` 判成位置参数。
+  //   直接 spawn 就绕开了这层参数解析（写法与同文件的 preflight 一致）。
+  await run.run('release:pack', process.execPath, [
+    '--import', 'tsx/esm', join(REPOSITORY_ROOT, 'scripts/release/pack.ts'),
+    '--family', 'dsh', '--out', buildPaths.packedDsh, ...packArguments,
+  ], { cwd: REPOSITORY_ROOT, env: buildEnv })
   await execute([
     '--dir',
     'apps/desktop-host',
@@ -482,7 +586,10 @@ export async function packageTarget(
     '--pack-destination',
     buildPaths.packedDsh,
   ], buildEnv, REPOSITORY_ROOT)
-  await execute(['run', 'release:pack', '--family', 'vendor', '--out', buildPaths.packedVendor, ...packArguments], buildEnv, REPOSITORY_ROOT)
+  await run.run('release:pack', process.execPath, [
+    '--import', 'tsx/esm', join(REPOSITORY_ROOT, 'scripts/release/pack.ts'),
+    '--family', 'vendor', '--out', buildPaths.packedVendor, ...packArguments,
+  ], { cwd: REPOSITORY_ROOT, env: buildEnv })
   rmSync(buildPaths.packedLandlock, { recursive: true, force: true })
   mkdirSync(buildPaths.packedLandlock, { recursive: true })
   await execute(['--dir', 'native/system', 'run', 'build:ts'], buildEnv, REPOSITORY_ROOT)

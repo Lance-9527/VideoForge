@@ -247,7 +247,8 @@ ManifestDPIAware true
   ${EndIf}
   Pop $0
 
-  ; ★★ VideoForge（2026-10-21）：给快捷方式补 --user-data-dir
+  ; ★★ 给快捷方式补 --user-data-dir（数据目录名由打包时按品牌注入：
+;   __BRAND_DATA_DIR__ → VideoForge / ShopSteward）
   ;
   ;   为什么必须在这里做：Chromium 的磁盘缓存目录在**进程启动前**就确定了，
   ;   在 JS 里 app.setPath('userData') 已经太晚 —— 实测双击 exe 会
@@ -263,7 +264,7 @@ ManifestDPIAware true
     StrCpy $0 1
   ${EndIf}
   SetShellVarContext current
-  StrCpy $R0 "$LOCALAPPDATA\VideoForge\electron"
+  StrCpy $R0 "$LOCALAPPDATA\__BRAND_DATA_DIR__\electron"
   ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     ${If} "$newStartMenuLink" != ""
       CreateShortCut "$newStartMenuLink" "$appExe" "--user-data-dir=$R0" "$appExe" 0 "" "" "${APP_DESCRIPTION}"

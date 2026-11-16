@@ -38,6 +38,8 @@ const PREBUILT_PACKAGES = [
   // VideoForge fork: hand-written ESM client bundle (no lib/types entry).
   'packages/client/ui-vf-workbench',
   'packages/video/vf-video',
+  // 掌柜 AI fork: 手写 ESM 工具 bundle（shop_* 电商工具），同样没有 lib/types 入口。
+  'packages/video/shop-agent',
   // VideoForge fork: vendored upstream dsh-zcode-browser-use@0.9.0 (侧栏自有浏览器).
   // 它的 index.js / lib/*.js 都是上游**已构建**的 ESM，没有 src/ 也没有 lib/types；
   // 不排除掉，Host bundle 门会以「Cannot find entry: lib/types/{index,startup}.js」

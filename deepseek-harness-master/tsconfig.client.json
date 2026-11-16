@@ -99,6 +99,7 @@
     { "path": "./packages/client/ui-sidebar" },
     { "path": "./packages/client/ui-brand-official" },
     { "path": "./packages/client/ui-vf-brand" },
+    { "path": "./packages/client/ui-shop-brand" },
     { "path": "./packages/client/ui-vf-cards" },
     { "path": "./packages/client/ui-vf-studio" },
     { "path": "./packages/client/ui-approval" },

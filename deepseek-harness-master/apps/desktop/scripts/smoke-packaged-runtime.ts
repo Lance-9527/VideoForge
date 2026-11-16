@@ -1,5 +1,5 @@
 /** Validate the assembled application, including native Office conversion outside ASAR. */
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { desktopArtifactOutput, resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
@@ -16,13 +16,25 @@ const artifacts = desktopArtifactOutput(paths, { unsigned: values.unsigned, skip
 const application = windows ? join(artifacts, 'win-unpacked')
   : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app', 'Contents')
 const resources = join(application, windows ? 'resources' : 'Resources')
-// ★★ VideoForge 二次开发（2026-10-21）：exe 改名为 VideoForge.exe（productName 改了），
-//   这里原来写死 'DeepSeek Harness.exe' → 打包后自检直接 ENOENT 失败。
-//   改成**按目录里实际存在的 exe 找**，以后再改名也不会坏。
+// ★★ exe 名跟着**品牌**走（productName 决定 exe 文件名）：
+//   VideoForge.exe / ShopSteward.exe / DeepSeek Harness.exe。
+//   这里按 `resources/brand.json` 的 productName 解析；读不到就退回「目录里找 .exe」。
+function resolveWindowsExecutable(directory: string, resourcesDirectory: string): string {
+  try {
+    const brand = JSON.parse(readFileSync(join(resourcesDirectory, 'brand.json'), 'utf8')) as { productName?: string }
+    if (typeof brand.productName === 'string' && brand.productName !== '') {
+      const candidate = join(directory, `${brand.productName}.exe`)
+      if (existsSync(candidate)) { return candidate }
+    }
+  } catch {
+    // 读不到品牌文件就往下走
+  }
+  // 兜底：目录里唯一的 .exe
+  const found = readdirSync(directory).find((name) => name.toLowerCase().endsWith('.exe'))
+  return found === undefined ? join(directory, 'DeepSeek Harness.exe') : join(directory, found)
+}
 const executable = windows
-  ? (existsSync(join(application, 'VideoForge.exe'))
-      ? join(application, 'VideoForge.exe')
-      : join(application, 'DeepSeek Harness.exe'))
+  ? resolveWindowsExecutable(application, resources)
   : join(application, 'MacOS', 'DeepSeek Harness')
 const descriptor = await verifyDesktopRuntime(paths.dsh, readDesktopRuntime(paths.dsh).release.version,
   resolveDesktopPackageTarget(target))
